@@ -1,0 +1,15 @@
+menu "NAND MX35"
+    
+    choice NAND_MX35_SPI_BUS
+        prompt "SPI BUS for NAND MX35"
+        default NAND_MX35_SPI2_BUS 
+        help
+            Select the SPI bus to use for NAND MX35 device.
+        
+        config NAND_MX35_SPI2_BUS
+            bool "SPI2_BUS"
+        config NAND_MX35_SPI3_BUS
+            bool "SPI3_BUS"
+    endchoice
+
+endmenu
