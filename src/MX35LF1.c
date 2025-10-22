@@ -185,11 +185,11 @@ mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
     esp_log_level_set(TAG, ESP_LOG_VERBOSE);
     ESP_LOGV(TAG, "mx35_err_t nand_mx35_config(...)");
 
-    nand_mx35_context_t *ctx = (nand_mx35_context_t *) malloc(sizeof(nand_mx35_context_t));
-    if (!ctx)
+    mx35_ctx = (nand_mx35_context_t *) malloc(sizeof(nand_mx35_context_t));
+    if (!mx35_ctx)
         return MX35_NO_MEM;
 
-    *ctx = (nand_mx35_context_t) {
+    *mx35_ctx = (nand_mx35_context_t) {
         .cfg = *cfg,
         .spi_host = SPI_BUS_HOST,
     };
@@ -219,9 +219,7 @@ mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
     }
 
     ESP_LOGI(TAG, "SPI Initialize");
-    ret = spi_bus_add_device(SPI_BUS_HOST, &devcfg, &ctx->spi);
-
-    mx35_ctx = ctx;
+    ret = spi_bus_add_device(SPI_BUS_HOST, &devcfg, &mx35_ctx->spi);
 
     gpio_config_t out_cfg = {
         .pin_bit_mask = BIT64(cfg->spi_pins.cs_io) | BIT64(cfg->spi_pins.hd_io) | BIT64(cfg->spi_pins.wp_io),
@@ -254,13 +252,13 @@ mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
     return MX35_OK;
 
 cleanup:
-    if (ctx->spi)
+    if (mx35_ctx->spi)
     {
-        spi_bus_remove_device(ctx->spi);
-        ctx->spi = NULL;
+        spi_bus_remove_device(mx35_ctx->spi);
+        mx35_ctx->spi = NULL;
     }
 
-    free(ctx);
+    free(mx35_ctx);
     return MX35_FAIL;
 }
 
@@ -271,6 +269,8 @@ mx35_err_t nand_mx35_deinit()
     if (mx35_ctx->spi)
         spi_bus_remove_device(mx35_ctx->spi);
 
-    free(mx35_ctx);
+    if (mx35_ctx)
+        free(mx35_ctx);
+
     return MX35_OK;
 }
