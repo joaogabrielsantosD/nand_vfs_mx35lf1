@@ -12,4 +12,12 @@ menu "NAND MX35"
             bool "SPI3_BUS"
     endchoice
 
+    menu "Debug Options"
+        config NAND_MX35_DEBUG_GET_REG
+            bool "Enable debug for get register"
+            default n
+            help
+                Enable debug messages for register read operations.
+    endmenu
+
 endmenu
