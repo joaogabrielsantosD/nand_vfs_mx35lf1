@@ -23,6 +23,7 @@ static nand_mx35_handle_t mx35_ctx;
 #define ENABLE_HOLD  (gpio_set_level(mx35_ctx->cfg.spi_pins.hd_io, 0))
 #define DISABLE_HOLD (gpio_set_level(mx35_ctx->cfg.spi_pins.hd_io, 1))
 
+
 static esp_err_t spi_write_read(const uint8_t *cmd, const uint8_t len, uint8_t *rx)
 {
     if (len == 0)
@@ -78,19 +79,21 @@ static mx35_err_t WaitOperationDone()
 static bool nand_mx35_write_enable()
 {
     uint8_t cmd[] = {CMD_WRITE_ENABLE};
-    uint8_t _rx[4];
-    spi_write_read(cmd, sizeof(cmd), _rx);
+    spi_write_read(cmd, sizeof(cmd), NULL);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    uint8_t reg = nand_mx35lf_GET_Features(REG_STATUS) & WEL_BIT;
 
-    return _rx[2] & WEL_BIT;
+    return reg == WEL_BIT;
 }
 
 static bool nand_mx35_write_disable()
 {
     uint8_t cmd[] = {CMD_WRITE_DISABLE};
-    uint8_t _rx[4];
-    spi_write_read(cmd, sizeof(cmd), _rx);
+    spi_write_read(cmd, sizeof(cmd), NULL);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    uint8_t reg = nand_mx35lf_GET_Features(REG_STATUS) & WEL_BIT;
 
-    return (_rx[2] & WEL_BIT) == 0x00;
+    return reg == 0x00;
 }
 
 static void nand_mx35_reset()
