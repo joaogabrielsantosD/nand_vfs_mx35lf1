@@ -15,6 +15,9 @@
 #include "sdkconfig.h"
 #include "MX35LF1_Registers.h"
 
+#define Block_To_Page(a) ((int) (a * NUM_PAGES_PER_BLOCK))  // Convert the Block address to Page address
+#define Page_To_Block(b) ((int) (b / NUM_PAGES_PER_BLOCK))  // Convert the Page address to Block address
+
 typedef struct
 {
     gpio_num_t mosi_io;

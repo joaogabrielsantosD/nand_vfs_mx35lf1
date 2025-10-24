@@ -33,7 +33,7 @@
 
 ## Internal ECC Status Read
 
-- [ ] Internal ECC Status Read
+- [x] Internal ECC Status Read
 
 ## Program Operations
 

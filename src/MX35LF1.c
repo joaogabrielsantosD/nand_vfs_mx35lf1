@@ -23,6 +23,7 @@ static nand_mx35_handle_t mx35_ctx;
 #define ENABLE_HOLD  (gpio_set_level(mx35_ctx->cfg.spi_pins.hd_io, 0))
 #define DISABLE_HOLD (gpio_set_level(mx35_ctx->cfg.spi_pins.hd_io, 1))
 
+//--- Private ----------------------------------------------------------
 
 static esp_err_t spi_write_read(const uint8_t *cmd, const uint8_t len, uint8_t *rx)
 {
@@ -49,8 +50,6 @@ static esp_err_t spi_write_read(const uint8_t *cmd, const uint8_t len, uint8_t *
 
 static void nand_mx35lf_SET_Features(uint8_t address, uint8_t value)
 {
-    ESP_LOGV(TAG, "void mx35lf_SET_features()");
-
     uint8_t cmd[] = {CMD_SET_FEATURES, address, value};
     spi_write_read(cmd, sizeof(cmd), NULL);
     return;
@@ -58,8 +57,6 @@ static void nand_mx35lf_SET_Features(uint8_t address, uint8_t value)
 
 static uint8_t nand_mx35lf_GET_Features(uint8_t address)
 {
-    ESP_LOGV(TAG, "uint8_t nand_mx35lf_GET_Features(...)");
-
     uint8_t cmd[] = {CMD_GET_FEATURES, address, 0x00};
     uint8_t _rx[4];
     spi_write_read(cmd, sizeof(cmd), _rx);
@@ -126,8 +123,6 @@ static bool nand_mx35_get_id()
 
 static void Test_GET_Registers_BlockProtection()
 {
-    ESP_LOGV(TAG, "void Test_GET_Registers_BlockProtection()");
-
     uint8_t reg = nand_mx35lf_GET_Features(REG_BLOCK_PROTECTION);
     printf("RESULT: 0x%02X\r\n", reg);
 
@@ -144,8 +139,6 @@ static void Test_GET_Registers_BlockProtection()
 
 static void Test_GET_Registers_SecureOTP()
 {
-    ESP_LOGV(TAG, "void Test_GET_Registers_SecureOTP()");
-
     uint8_t reg = nand_mx35lf_GET_Features(REG_SECURE_OTP);
     printf("RESULT: 0x%02X\r\n", reg);
 
@@ -162,8 +155,6 @@ static void Test_GET_Registers_SecureOTP()
 
 static void Test_GET_Registers_Status()
 {
-    ESP_LOGV(TAG, "void Test_GET_Registers_Status()");
-
     uint8_t reg = nand_mx35lf_GET_Features(REG_STATUS);
     printf("RESULT: 0x%02X\r\n", reg);
 
@@ -178,15 +169,32 @@ static void Test_GET_Registers_Status()
     printf("\r\n");
 }
 
+static void Test_GET_Registers_InternalECC()
+{
+    uint8_t reg = nand_mx35lf_GET_Features(REG_INTERNAL_ECC_STATUS);
+    printf("RESULT: 0x%02X\r\n", reg);
+
+    printf("bit[0] - [ECCSR[0]] - %d\r\n", (reg >> 0) & 0x01);
+    printf("bit[1] - [ECCSR[1]] - %d\r\n", (reg >> 1) & 0x01);
+    printf("bit[2] - [ECCSR[2]] - %d\r\n", (reg >> 2) & 0x01);
+    printf("bit[3] - [ECCSR[3]] - %d\r\n", (reg >> 3) & 0x01);
+    printf("bit[4] - [Reserved] - %d\r\n", (reg >> 4) & 0x01);
+    printf("bit[5] - [Reserved] - %d\r\n", (reg >> 5) & 0x01);
+    printf("bit[6] - [Reserved] - %d\r\n", (reg >> 6) & 0x01);
+    printf("bit[7] - [Reserved] - %d\r\n", (reg >> 7) & 0x01);
+    printf("\r\n");
+}
+
 #endif
+
+//--- Public ----------------------------------------------------------
 
 mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
 {
     if (cfg == NULL)
         return MX35_INVALID_ARGUMENT;
 
-    esp_log_level_set(TAG, ESP_LOG_VERBOSE);
-    ESP_LOGV(TAG, "mx35_err_t nand_mx35_config(...)");
+    esp_log_level_set(TAG, ESP_LOG_DEBUG);
 
     mx35_ctx = (nand_mx35_context_t *) malloc(sizeof(nand_mx35_context_t));
     if (!mx35_ctx)
@@ -247,6 +255,7 @@ mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
     Test_GET_Registers_BlockProtection();
     Test_GET_Registers_SecureOTP();
     Test_GET_Registers_Status();
+    Test_GET_Registers_InternalECC();
 #endif
 
     MX35_UNSELECT;
@@ -267,13 +276,12 @@ cleanup:
 
 mx35_err_t nand_mx35_deinit()
 {
-    ESP_LOGV(TAG, "mx35_err_t nand_mx35_deinit()");
-
     if (mx35_ctx->spi)
         spi_bus_remove_device(mx35_ctx->spi);
 
     if (mx35_ctx)
         free(mx35_ctx);
 
+    ESP_LOGW(TAG, "Deinit nand_mx35");
     return MX35_OK;
 }
