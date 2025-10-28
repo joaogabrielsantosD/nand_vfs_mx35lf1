@@ -48,6 +48,7 @@ static esp_err_t spi_write_read(const uint8_t *cmd, const uint8_t len, uint8_t *
     return ret;
 }
 
+
 static void nand_mx35lf_SET_Features(uint8_t address, uint8_t value)
 {
     uint8_t cmd[] = {CMD_SET_FEATURES, address, value};
@@ -73,6 +74,7 @@ static mx35_err_t WaitOperationDone()
     return MX35_FAIL;
 }
 
+
 static bool nand_mx35_write_enable()
 {
     uint8_t cmd[] = {CMD_WRITE_ENABLE};
@@ -92,6 +94,36 @@ static bool nand_mx35_write_disable()
 
     return reg == 0x00;
 }
+
+
+static void nand_mx35_program_load(uint8_t *data, size_t len)
+{
+    uint8_t cmd[3] = {CMD_PROGRAM_LOAD_X1, 0x00, 0x00};
+    spi_transaction_t t1 = {.length = 24, .tx_buffer = cmd};
+    spi_transaction_t t2 = {.length = len * 8, .tx_buffer = data};
+
+    MX35_SELECT;
+    spi_device_polling_transmit(mx35_ctx->spi, &t1);
+    spi_device_polling_transmit(mx35_ctx->spi, &t2);
+    MX35_UNSELECT;
+}
+
+static void nand_mx35_program_execute(uint16_t block, uint8_t page_in_block)
+{
+    uint32_t row = (block * NUM_PAGES_PER_BLOCK) + page_in_block;
+    uint8_t cmd[4] = {
+        CMD_PROGRAM_EXECUTE,
+        (uint8_t) ((row >> 16) & 0xFF),
+        (uint8_t) ((row >> 8) & 0xFF),
+        (uint8_t) (row & 0xFF),
+    };
+    spi_transaction_t t = {.length = sizeof(cmd) * 8, .tx_buffer = cmd};
+
+    MX35_SELECT;
+    spi_device_polling_transmit(mx35_ctx->spi, &t);
+    MX35_UNSELECT;
+}
+
 
 static void nand_mx35_reset()
 {
@@ -118,6 +150,7 @@ static bool nand_mx35_get_id()
     spi_write_read(cmd, sizeof(cmd), _rx);
     return (_rx[2] == MANUFACTURER_ID && _rx[3] == DEVICE_ID);
 }
+
 
 #if CONFIG_NAND_MX35_DEBUG_GET_REG
 
@@ -274,6 +307,7 @@ cleanup:
     return MX35_FAIL;
 }
 
+
 mx35_err_t nand_mx35_deinit()
 {
     if (mx35_ctx->spi)
@@ -283,5 +317,49 @@ mx35_err_t nand_mx35_deinit()
         free(mx35_ctx);
 
     ESP_LOGW(TAG, "Deinit nand_mx35");
+    return MX35_OK;
+}
+
+
+mx35_err_t nand_mx35_write_page(uint16_t start_block, uint16_t start_page, uint8_t *buffer, size_t total_size, uint16_t *block_address, uint16_t *page_address)
+{
+    uint16_t block = start_block;
+    uint8_t page = start_page;
+    size_t offset = 0;
+
+    while (offset < total_size)
+    {
+        size_t chunk = (total_size - offset > PAGE_SIZE_WITHOUT_ECC) ? PAGE_SIZE_WITHOUT_ECC : (total_size - offset);
+
+        nand_mx35_write_enable();
+        nand_mx35_program_load(&buffer[offset], chunk);
+        nand_mx35_program_execute(block, page);
+        WaitOperationDone();
+
+        uint8_t status = nand_mx35lf_GET_Features(REG_STATUS);
+        // ESP_LOGW(TAG, "status: %d", status);
+        if (status & 0x04)
+        {
+            ESP_LOGE(TAG, "Programming error in the block %d, page %d", block, page);
+            return MX35_FAIL;
+        }
+
+        offset += chunk;
+        page++;
+
+        if (page >= NUM_PAGES_PER_BLOCK)
+        {
+            page = 0;
+            block++;
+        }
+    }
+
+    if (block_address != NULL)
+        *block_address = block;
+
+    if (page_address != NULL)
+        *page_address = page;
+
+    ESP_LOGI(TAG, "Recording completed: %u bytes in blocks %u - %u and page %d", total_size, start_block, block, page);
     return MX35_OK;
 }

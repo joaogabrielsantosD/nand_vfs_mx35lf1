@@ -37,11 +37,11 @@
 
 ## Program Operations
 
-- [ ] Program load
+- [x] Program load
 - [ ] Program load random data
 - [ ] program load x4
 - [ ] QUAD IO program random input
-- [ ] program execute
+- [x] program execute
 
 ## Block Operations
 
