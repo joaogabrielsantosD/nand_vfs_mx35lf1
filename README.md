@@ -45,7 +45,7 @@
 
 ## Block Operations
 
-- [ ] Block Erase
+- [x] Block Erase
 
 ## Feature Register
 
