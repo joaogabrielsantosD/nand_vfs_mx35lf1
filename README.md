@@ -13,23 +13,15 @@
 
 ## READ Operations
 
-- [ ] PAGE READ
+- [x] PAGE READ
 - [ ] QE Bit
-- [ ] RANDOM DATA READ
+- [x] RANDOM DATA READ
 - [ ] READ FROM CACHE X2
 - [ ] READ FROM CACHE X4
-- [ ] Page Read Cache Sequential
-- [ ] Page Read Cache End
-- [ ] Page Read Cache flow
+- [x] Page Read Cache Sequential
+- [x] Page Read Cache End
+- [x] Page Read Cache flow
 - [x] Read ID
-
-## Parameter Page
-
-- [ ] Paremeter page structure
-
-## UniqueID Page
-
-- [ ] UniqueID Page
 
 ## Internal ECC Status Read
 
@@ -38,7 +30,6 @@
 ## Program Operations
 
 - [x] Program load
-- [ ] Program load random data
 - [ ] program load x4
 - [ ] QUAD IO program random input
 - [x] program execute
@@ -49,9 +40,9 @@
 
 ## Feature Register
 
-- [ ] Block Protection Feature
-- [ ] Secure OTP
-- [ ] Status Register
+- [x] Block Protection Feature
+- [x] Secure OTP
+- [x] Status Register
 
 ## Software Algorithm
 
