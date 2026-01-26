@@ -1,0 +1,69 @@
+# Core style selection
+BasedOnStyle: Mozilla
+Language: Cpp
+
+# Brace style modifications for Allman
+BreakBeforeBraces: Allman
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: None
+
+# Width/line breaking configuration
+ColumnLimit: 180
+BinPackArguments: false
+BinPackParameters: false
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+BreakStringLiterals: false
+
+# Alignment configuration
+AlignAfterOpenBracket: AlwaysBreak
+AlignConsecutiveMacros: true
+AlignOperands: Align
+AlignTrailingComments: true
+AlignEscapedNewlines: Left
+
+# Indentation rules
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+ConstructorInitializerIndentWidth: 4
+IndentPPDirectives: AfterHash
+
+# Spacing preferences
+SpaceBeforeParens: ControlStatements
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceAfterCStyleCast: true
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInContainerLiterals: false
+
+# Template/declaration formatting
+AlwaysBreakTemplateDeclarations: Yes
+BreakConstructorInitializers: AfterColon
+BreakInheritanceList: AfterColon
+AlwaysBreakAfterDefinitionReturnType: None
+AlwaysBreakAfterReturnType: None
+
+# Comment formatting
+ReflowComments: false
+SpacesBeforeTrailingComments: 2
+
+# Language-specific settings
+Cpp11BracedListStyle: true
+PointerAlignment: Right
+DerivePointerAlignment: false
+NamespaceIndentation: Inner
+
+# Empty line handling
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 2
+
+# Misc formatting rules
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: false
+CompactNamespaces: false
+FixNamespaceComments: false
+SortIncludes: Never
+SortUsingDeclarations: true
