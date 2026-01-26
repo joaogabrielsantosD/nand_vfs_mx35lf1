@@ -1,55 +1,150 @@
-- Biblioteca de referência [WinbondW25N](https://github.com/squaresausage/WinbondW25N.git)
+# MX35LF1 NAND Flash Driver (ESP-IDF)
 
-## WRITE Operations
+Driver em C para o **NAND Flash MX35LF1GE4AB** da **Macronix**, desenvolvido para uso com **ESP32** utilizando o framework **ESP-IDF** e comunicação via **SPI**.
 
-- [x] Write Enable
-- [x] Write Disable
+Esta biblioteca fornece uma interface simples para inicialização, leitura, escrita e apagamento de memória NAND, abstraindo os comandos de baixo nível do dispositivo.
 
-## Feature Operations
+---
 
-- [x] GET Feature
-- [x] SET Feature
-- [x] Wait operation Done
+## 📦 Dispositivo Suportado
 
-## READ Operations
+- **Fabricante:** Macronix International Co., Ltd.
+- **Part Number:** MX35LF1GE4AB-Z4I-TR
+- **Capacidade:** 1 Gbit NAND Flash
+- **Interface:** SPI
+- **Tensão:** 3.3 V
+- **Datasheet:**  
+  https://mouser.com/datasheet/2/819/MX35LF1GE4AB_2c_3V_2c_1Gb_2c_v1_9-3371019.pdf
 
-- [x] PAGE READ
-- [ ] QE Bit
-- [x] RANDOM DATA READ
-- [ ] READ FROM CACHE X2
-- [ ] READ FROM CACHE X4
-- [x] Page Read Cache Sequential
-- [x] Page Read Cache End
-- [x] Page Read Cache flow
-- [x] Read ID
+---
 
-## Internal ECC Status Read
+## 🧩 Estrutura dos Arquivos
 
-- [x] Internal ECC Status Read
+- [MX35LF1.c](src/MX35LF1.c) → Implementação do driver
+- [MX35LF1.h](include/MX35LF1.h) → Interface pública e tipos
+- [MX35LF1_Registers.h](include/MX35LF1_Registers.h) → Definições de comandos e registradores
 
-## Program Operations
+---
 
-- [x] Program load
-- [ ] program load x4
-- [ ] QUAD IO program random input
-- [x] program execute
+## 🚀 Funcionalidades
 
-## Block Operations
+- Inicialização e desinicialização do dispositivo
+- Leitura de páginas NAND
+- Escrita de páginas NAND
+- Apagamento de blocos
+- Apagamento completo (bulk erase)
+- Controle de:
+  - Write Enable / Write Protect
+  - HOLD e WP via GPIO
+- Comunicação SPI usando `spi_device_polling_transmit`
+- Suporte a SPI2 ou SPI3 (configurável via `sdkconfig`)
 
-- [x] Block Erase
+---
 
-## Feature Register
+## ⚠️ Restrições Importantes
 
-- [x] Block Protection Feature
-- [x] Secure OTP
-- [x] Status Register
+> **O bloco 0 da memória NAND NÃO deve ser utilizado.**
 
-## Software Algorithm
+O **bloco 0** é reservado internamente pelo dispositivo e/ou pode conter informações críticas como:
 
-- [ ] Invalid blocks
-- [ ] Bad Block Test Flow
-- [ ] Failure Phenomena for Read/Program/Erase Operations
+- Dados de inicialização interna
+- Tabelas internas do fabricante
+- Áreas suscetíveis a blocos defeituosos
 
-## DEVICE POWER-UP
+⚠️ **Qualquer tentativa de leitura, escrita ou apagamento do bloco 0 pode resultar em comportamento indefinido ou falha permanente do dispositivo.**
 
-- [x] RESET_ID
+➡️ **Sempre inicie o uso da memória a partir do bloco 1.**
+
+---
+
+## Exemplo
+
+Para mais informações de Funcionalidades e de uso da biblioteca, tome como referência o exemplo ([example/main/main.c](example/main/main.c)).
+
+## ⚙️ Configuração do SPI
+
+- Frequência SPI configurada para **50 MHz**
+- Host SPI definido via `menuconfig`:
+  - `CONFIG_NAND_MX35_SPI2_BUS`
+  - `CONFIG_NAND_MX35_SPI3_BUS`
+
+## 📚 API Pública
+
+- **Inicialização**
+
+```c
+mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg);
+```
+
+Inicializa o barramento SPI, configura GPIOs e prepara o dispositivo.
+
+- **Desinicialização**
+
+```c
+mx35_err_t nand_mx35_deinit(void);
+```
+
+libera recursos do SPI.
+
+- **Leitura de Página**
+
+```c
+mx35_err_t nand_mx35_read_page(
+    uint16_t block,
+    uint8_t page,
+    uint8_t *buffer,
+    size_t len
+);
+```
+
+📌 Nota: o parâmetro block deve ser ≥ 1.
+
+- **Escrita de Página**
+
+```c
+mx35_err_t nand_mx35_write_page(
+    uint16_t block,
+    uint8_t page,
+    uint8_t *buffer,
+    size_t len,
+    uint16_t *page_address
+);
+```
+
+📌 Nota: o parâmetro block deve ser ≥ 1.
+
+- **Apagamento de Bloco**
+
+```c
+mx35_err_t nand_mx35_erase_block(uint16_t block);
+```
+
+📌 Nota: o parâmetro block deve ser ≥ 1.
+
+- **Apagamento Completo**
+
+```c
+mx35_err_t nand_mx35_bulk_erase(void);
+```
+
+⚠️ Operação destrutiva – apaga todo o conteúdo da memória, exceto restrições internas do dispositivo.
+
+## ❌ Códigos de Retorno
+
+```c
+#define MX35_OK               0
+#define MX35_FAIL             1
+#define MX35_READ_FAIL        2
+#define MX35_WRITE_FAIL       3
+#define MX35_INVALID_ARGUMENT 4
+#define MX35_NO_MEM           5
+```
+
+## 🧠 Utilidades
+
+Macros para conversão entre bloco e página:
+
+```c
+#define Block_To_Page(a) ((int)(a * NUM_PAGES_PER_BLOCK))
+#define Page_To_Block(b) ((int)(b / NUM_PAGES_PER_BLOCK))
+```
