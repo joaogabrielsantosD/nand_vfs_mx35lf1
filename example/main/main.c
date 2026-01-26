@@ -224,8 +224,7 @@ void app_main()
     }
     ESP_LOGD(TAG, "NAND MX35 initialized successfully");
 
-    // result = erase_block();
-    // result = erase_all_blocks();
+    result = erase_all_blocks();
     if (result != MX35_OK)
     {
         ESP_LOGE("MAIN", "Error to erase the block");

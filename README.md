@@ -138,6 +138,7 @@ mx35_err_t nand_mx35_bulk_erase(void);
 #define MX35_WRITE_FAIL       3
 #define MX35_INVALID_ARGUMENT 4
 #define MX35_NO_MEM           5
+#define MX35_INVALID_BLOCK    6
 ```
 
 ## 🧠 Utilidades

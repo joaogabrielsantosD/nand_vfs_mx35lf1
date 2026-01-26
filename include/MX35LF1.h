@@ -56,6 +56,7 @@ typedef uint8_t mx35_err_t;
 #define MX35_WRITE_FAIL       3  // Error in Write operation
 #define MX35_INVALID_ARGUMENT 4  // Invalid argument passed to function
 #define MX35_NO_MEM           5  // Memory allocation error
+#define MX35_INVALID_BLOCK    6  // Invalid block (bad block)
 
 mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg);
 

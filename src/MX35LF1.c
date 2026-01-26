@@ -14,6 +14,9 @@
 static const char *TAG = "NAND MX35";
 static nand_mx35_context_t mx35_ctx;
 
+static uint8_t bad_blocks_map[20] = {0};
+static uint8_t bad_blocks_count = 0;
+
 #define MX35_SELECT   (gpio_set_level(mx35_ctx.cfg.spi_pins.cs_io, 0))
 #define MX35_UNSELECT (gpio_set_level(mx35_ctx.cfg.spi_pins.cs_io, 1))
 
@@ -170,6 +173,28 @@ static bool nand_mx35_get_id()
     return (_rx[2] == MANUFACTURER_ID && _rx[3] == DEVICE_ID);
 }
 
+static void nand_mx35_verify_bad_blocks()
+{
+    uint8_t b[2];
+    for (uint16_t i = 0; i < BLOCK_SIZE; i++)
+    {
+        nand_mx35_read_page(i, 0, b, 2);
+        if (b[1] == 0x00 || b[2] == 0x00)
+        {
+            bad_blocks_map[bad_blocks_count++] = i;
+            ESP_LOGW(TAG, "Bad block found at index %d", i);
+        }
+    }
+}
+
+static mx35_err_t nand_mx35_check_block(uint16_t block)
+{
+    for (uint8_t i = 0; i < bad_blocks_count; i++)
+        if (bad_blocks_map[i] == block)
+            return MX35_INVALID_BLOCK;
+    return MX35_OK;
+}
+
 
 #if CONFIG_NAND_MX35_DEBUG_GET_REG
 
@@ -311,6 +336,7 @@ mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
         ESP_LOGE(TAG, "Dont communicate with the MX35 module");
         goto cleanup;
     }
+    nand_mx35_verify_bad_blocks();
 
     nand_mx35_write_disable();
 
@@ -350,6 +376,12 @@ mx35_err_t nand_mx35_erase_block(uint16_t block)
 {
     if (block >= BLOCK_SIZE || block == 0)
         return MX35_INVALID_ARGUMENT;
+
+    if (nand_mx35_check_block(block) != MX35_OK)
+    {
+        ESP_LOGW(TAG, "Block %d is a bad block. Erase operation skipped.", block);
+        return MX35_INVALID_BLOCK;
+    }
 
     uint16_t page_address = block << 6;  // Block address[15:6] + Page address[5:0] = 0
     START_PROGRAM_MODE();
@@ -420,6 +452,15 @@ mx35_err_t nand_mx35_write_page(uint16_t block, uint8_t page, uint8_t *buffer, s
 
     while (bytes_written < len)
     {
+        ret = nand_mx35_check_block(block);
+        if (ret != MX35_OK)
+        {
+            ESP_LOGW(TAG, "Skipping bad block %d during write operation", current_block);
+            current_block++;
+            current_page = 0;
+            continue;
+        }
+
         size_t chunk = (len - bytes_written > 2048) ? 2048 : (len - bytes_written);
         address = (current_block << 6) | current_page;
 
@@ -477,6 +518,7 @@ mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, si
     if (!buffer || len == 0 || block >= BLOCK_SIZE || block == 0 || page > NUM_PAGES_PER_BLOCK)
         return MX35_INVALID_ARGUMENT;
 
+    mx35_err_t ret = MX35_OK;
     size_t bytes_read = 0;
     uint16_t current_block = block;
     uint8_t current_page = page;
@@ -484,6 +526,15 @@ mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, si
 
     while (bytes_read < len)
     {
+        ret = nand_mx35_check_block(block);
+        if (ret != MX35_OK)
+        {
+            ESP_LOGW(TAG, "Skipping bad block %d during read operation", current_block);
+            current_block++;
+            current_page = 0;
+            continue;
+        }
+
         size_t chunk = (len - bytes_read > 2048) ? 2048 : (len - bytes_read);
         address = (current_block << 6) | current_page;
 
@@ -500,7 +551,7 @@ mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, si
         if (WaitOperationDone() != MX35_OK)
         {
             ESP_LOGE(TAG, "Timeout in page read operation");
-            return MX35_FAIL;
+            return MX35_READ_FAIL;
         }
 
         uint8_t cmd_read_cache[4] = {CMD_READ_FROM_CACHE, FINAL_PAGE_ADDRESS_2048 << 6, 0x00, 0x00};
