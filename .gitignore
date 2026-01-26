@@ -1,9 +1,0 @@
-build/
-sdkconfig
-sdkconfig.old
-
-example/build/
-example/.vscode/
-example/Makefile
-example/sdkconfig
-example/sdkconfig.old

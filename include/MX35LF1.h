@@ -4,9 +4,11 @@
 /*
  * Details about the module 
  *
- * Macronix MX35LF1GE4AcB-Z4I-TR
- * NAND FLASH library
+ * Manufacturer: Macronix International Co., Ltd.
+ * Part Number: MX35LF1GE4AcB-Z4I-TR
  * Datasheet: https://mouser.com/datasheet/2/819/MX35LF1GE4AB_2c_3V_2c_1Gb_2c_v1_9-3371019.pdf
+ * 
+ * NAND FLASH library
 */
 
 #include "driver/spi_master.h"
@@ -44,7 +46,6 @@ typedef struct
 
 } nand_mx35_context_t;
 
-typedef nand_mx35_context_t *nand_mx35_handle_t;
 
 // Status for function @return
 typedef uint8_t mx35_err_t;
@@ -53,19 +54,19 @@ typedef uint8_t mx35_err_t;
 #define MX35_FAIL             1  // Operation Failed/ERROR
 #define MX35_READ_FAIL        2  // Error in Read operation
 #define MX35_WRITE_FAIL       3  // Error in Write operation
-#define MX35_INVALID_ARGUMENT 4
-#define MX35_NO_MEM           5
+#define MX35_INVALID_ARGUMENT 4  // Invalid argument passed to function
+#define MX35_NO_MEM           5  // Memory allocation error
 
 mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg);
 
 mx35_err_t nand_mx35_deinit(void);
 
-mx35_err_t nand_mx35_erase_block(uint16_t page_address);
+mx35_err_t nand_mx35_erase_block(uint16_t block);
 
 mx35_err_t nand_mx35_bulk_erase(void);
 
-mx35_err_t nand_mx35_write_page(uint16_t start_page, uint8_t *buffer, size_t len, uint16_t *page_address);
+mx35_err_t nand_mx35_write_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address);
 
-mx35_err_t nand_mx35_read_page(uint16_t start_page, uint16_t final_page, uint8_t *buffer, size_t len);
+mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len);
 
 #endif  // __MX35LF1_H__

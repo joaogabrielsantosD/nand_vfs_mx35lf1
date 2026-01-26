@@ -12,16 +12,16 @@
 #endif
 
 static const char *TAG = "NAND MX35";
-static nand_mx35_handle_t mx35_ctx;
+static nand_mx35_context_t mx35_ctx;
 
-#define MX35_SELECT   (gpio_set_level(mx35_ctx->cfg.spi_pins.cs_io, 0))
-#define MX35_UNSELECT (gpio_set_level(mx35_ctx->cfg.spi_pins.cs_io, 1))
+#define MX35_SELECT   (gpio_set_level(mx35_ctx.cfg.spi_pins.cs_io, 0))
+#define MX35_UNSELECT (gpio_set_level(mx35_ctx.cfg.spi_pins.cs_io, 1))
 
-#define ENABLE_WP  (gpio_set_level(mx35_ctx->cfg.spi_pins.wp_io, 0))
-#define DISABLE_WP (gpio_set_level(mx35_ctx->cfg.spi_pins.wp_io, 1))
+#define ENABLE_WP  (gpio_set_level(mx35_ctx.cfg.spi_pins.wp_io, 0))
+#define DISABLE_WP (gpio_set_level(mx35_ctx.cfg.spi_pins.wp_io, 1))
 
-#define ENABLE_HOLD  (gpio_set_level(mx35_ctx->cfg.spi_pins.hd_io, 0))
-#define DISABLE_HOLD (gpio_set_level(mx35_ctx->cfg.spi_pins.hd_io, 1))
+#define ENABLE_HOLD  (gpio_set_level(mx35_ctx.cfg.spi_pins.hd_io, 0))
+#define DISABLE_HOLD (gpio_set_level(mx35_ctx.cfg.spi_pins.hd_io, 1))
 
 //--- Private ----------------------------------------------------------
 
@@ -31,13 +31,13 @@ static esp_err_t spi_write_read(const uint8_t *cmd, const uint8_t len, uint8_t *
         return ESP_ERR_INVALID_ARG;  // no need to send anything
 
     spi_transaction_t t = {
-        .length = len * 8,
+        .length = len * 8,  // Length in bits
         .tx_buffer = cmd,
         .flags = SPI_TRANS_USE_RXDATA,
     };
 
     MX35_SELECT;
-    esp_err_t ret = spi_device_polling_transmit(mx35_ctx->spi, &t);  // Transmit!
+    esp_err_t ret = spi_device_polling_transmit(mx35_ctx.spi, &t);  // Transmit!
     MX35_UNSELECT;
 
     if (rx != NULL)
@@ -67,11 +67,18 @@ static uint8_t nand_mx35lf_GET_Features(uint8_t address)
 
 static mx35_err_t WaitOperationDone()
 {
-    uint32_t time_reference = esp_timer_get_time() / 1000;
-    const unsigned long timeout = 500;
-    while (((uint32_t) (esp_timer_get_time() / 1000) - time_reference) < timeout)
-        if ((nand_mx35lf_GET_Features(REG_STATUS) & 0x01) == STATUS_READY)
+    uint8_t status = 0;
+    uint32_t timeout = 1000;
+
+    do
+    {
+        status = nand_mx35lf_GET_Features(REG_STATUS);
+        if ((status & 0x01) == STATUS_READY)
             return MX35_OK;
+
+        vTaskDelay(pdMS_TO_TICKS(1));
+    } while (timeout--);
+
     return MX35_FAIL;
 }
 
@@ -97,21 +104,41 @@ static bool nand_mx35_write_disable()
 }
 
 
-static void nand_mx35_program_load(uint8_t *data, size_t len)
+static mx35_err_t nand_mx35_program_load(uint8_t *data, size_t len)
 {
-    uint8_t wrap_bit = FINAL_PAGE_ADDRESS_2048 << 6;  // default in 2048 bytes
-    uint8_t cmd[3] = {CMD_PROGRAM_LOAD_X1, wrap_bit, 0x00};
-    spi_write_read(cmd, sizeof(cmd), NULL);
-    spi_write_read(data, len, NULL);
+    if (!data || len == 0)
+        return MX35_INVALID_ARGUMENT;
+
+    if (len > PAGE_SIZE_WITHOUT_ECC)
+        return MX35_INVALID_ARGUMENT;
+
+    uint8_t cmd_header[3] = {CMD_PROGRAM_LOAD_X1, 0x00, 0x00};  // start from column 0 (byte 0 of the page)
+
+    spi_transaction_t t = {
+        .tx_buffer = cmd_header,
+        .length = sizeof(cmd_header) * 8,
+    };
+
+    MX35_SELECT;
+    esp_err_t ret = spi_device_polling_transmit(mx35_ctx.spi, &t);
+    if (ret == ESP_OK)
+    {
+        t.tx_buffer = data;
+        t.length = len * 8;
+        ret = spi_device_polling_transmit(mx35_ctx.spi, &t);
+    }
+    MX35_UNSELECT;
+
+    return ret == ESP_OK ? MX35_OK : MX35_WRITE_FAIL;
 }
 
 static void nand_mx35_program_execute(uint16_t page_address)
 {
     uint8_t cmd[4] = {
         CMD_PROGRAM_EXECUTE,
-        (uint8_t) ((page_address >> 16) & 0xFF),
+        0x00,
         (uint8_t) ((page_address >> 8) & 0xFF),
-        (uint8_t) ((page_address >> 0) & 0xFF),
+        (uint8_t) (page_address & 0xFF),
     };
     spi_write_read(cmd, sizeof(cmd), NULL);
 }
@@ -127,7 +154,7 @@ static void nand_mx35_reset()
     };
 
     MX35_SELECT;
-    spi_device_polling_transmit(mx35_ctx->spi, &trans_desc);
+    spi_device_polling_transmit(mx35_ctx.spi, &trans_desc);
     MX35_UNSELECT;
 
     ENABLE_WP;
@@ -212,6 +239,24 @@ static void Test_GET_Registers_InternalECC()
 
 #endif
 
+
+static void nand_mx35_start_program_mode(void)
+{
+    DISABLE_WP;
+    nand_mx35lf_SET_Features(REG_BLOCK_PROTECTION, 0x00);  // Unprotect all blocks
+    nand_mx35_write_enable();
+}
+
+static void nand_mx35_stop_program_mode(void)
+{
+    nand_mx35_write_disable();
+    nand_mx35lf_SET_Features(REG_BLOCK_PROTECTION, BP0_BIT | BP1_BIT | BP2_BIT);  // Protect all blocks
+    ENABLE_WP;
+}
+
+#define START_PROGRAM_MODE() nand_mx35_start_program_mode()
+#define STOP_PROGRAM_MODE()  nand_mx35_stop_program_mode()
+
 //--- Public ----------------------------------------------------------
 
 mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
@@ -221,14 +266,8 @@ mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
 
     // esp_log_level_set(TAG, ESP_LOG_DEBUG);
 
-    mx35_ctx = (nand_mx35_context_t *) malloc(sizeof(nand_mx35_context_t));
-    if (!mx35_ctx)
-        return MX35_NO_MEM;
-
-    *mx35_ctx = (nand_mx35_context_t) {
-        .cfg = *cfg,
-        .spi_host = SPI_BUS_HOST,
-    };
+    mx35_ctx.cfg = *cfg;
+    mx35_ctx.spi_host = SPI_BUS_HOST;
 
     spi_bus_config_t buscfg = {
         .mosi_io_num = (int) cfg->spi_pins.mosi_io,
@@ -246,8 +285,7 @@ mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
         .queue_size = 10,
     };
 
-    esp_err_t ret = spi_bus_initialize(SPI_BUS_HOST, &buscfg, SPI_DMA_CH_AUTO);
-
+    esp_err_t ret = spi_bus_initialize(mx35_ctx.spi_host, &buscfg, SPI_DMA_CH_AUTO);
     if (ret)
     {
         ESP_LOGE(TAG, "Error to initialize the SPI bus");
@@ -255,7 +293,7 @@ mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
     }
 
     ESP_LOGI(TAG, "SPI Initialize");
-    ret = spi_bus_add_device(SPI_BUS_HOST, &devcfg, &mx35_ctx->spi);
+    ret = spi_bus_add_device(mx35_ctx.spi_host, &devcfg, &mx35_ctx.spi);
 
     gpio_config_t out_cfg = {
         .pin_bit_mask = BIT64(cfg->spi_pins.cs_io) | BIT64(cfg->spi_pins.hd_io) | BIT64(cfg->spi_pins.wp_io),
@@ -289,225 +327,208 @@ mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
     return MX35_OK;
 
 cleanup:
-    if (mx35_ctx->spi)
+    if (mx35_ctx.spi)
     {
-        spi_bus_remove_device(mx35_ctx->spi);
-        mx35_ctx->spi = NULL;
+        spi_bus_remove_device(mx35_ctx.spi);
+        mx35_ctx.spi = NULL;
     }
-
-    free(mx35_ctx);
     return MX35_FAIL;
 }
 
 
 mx35_err_t nand_mx35_deinit()
 {
-    if (mx35_ctx->spi)
-        spi_bus_remove_device(mx35_ctx->spi);
-
-    if (mx35_ctx)
-        free(mx35_ctx);
+    if (mx35_ctx.spi)
+        spi_bus_remove_device(mx35_ctx.spi);
 
     ESP_LOGW(TAG, "Deinit nand_mx35");
     return MX35_OK;
 }
 
 
-mx35_err_t nand_mx35_erase_block(uint16_t page_address)
+mx35_err_t nand_mx35_erase_block(uint16_t block)
 {
-    DISABLE_WP;
-    nand_mx35_write_enable();
+    if (block >= BLOCK_SIZE || block == 0)
+        return MX35_INVALID_ARGUMENT;
+
+    uint16_t page_address = block << 6;  // Block address[15:6] + Page address[5:0] = 0
+    START_PROGRAM_MODE();
 
     uint8_t cmd[] = {
         CMD_BLOCK_ERASE,
-        (uint8_t) ((page_address >> 16) & 0xFF),
+        0x00,
         (uint8_t) ((page_address >> 8) & 0xFF),
-        (uint8_t) ((page_address >> 0) & 0xFF),
+        (uint8_t) (page_address & 0xFF),
     };
     spi_write_read(cmd, sizeof(cmd), NULL);
     // vTaskDelay(pdMS_TO_TICKS(1));
 
-    if (WaitOperationDone())
+    mx35_err_t ret = WaitOperationDone();
+    if (ret != MX35_OK)
     {
-        ESP_LOGE(TAG, "error to erase block (page=0x%06X)", page_address);
-        return MX35_FAIL;
+        ESP_LOGE(TAG, "Timeout in erase block operation");
     }
 
-    // nand_mx35_write_disable();
-    // ENABLE_WP;
+    else
+    {
+        uint8_t status = nand_mx35lf_GET_Features(REG_STATUS);
+        // ESP_LOGW(TAG, "status: %d", status);
+        if (status & ERS_FAIL_BIT)
+        {
+            ESP_LOGE(TAG, "Erase error in the block %d", block);
+            ret = MX35_FAIL;
+        }
 
-    return MX35_OK;
+        else
+        {
+            ESP_LOGI(TAG, "Block %d erased successfully", block);
+            ret = MX35_OK;
+        }
+    }
+
+    STOP_PROGRAM_MODE();
+    return ret;
 }
 
 
 mx35_err_t nand_mx35_bulk_erase()
 {
-    for (uint16_t i = 0; i < (MAX_PAGE_SIZE - NUM_PAGES_PER_BLOCK); i += NUM_PAGES_PER_BLOCK)
-        if (nand_mx35_erase_block(i))
-            return MX35_FAIL;
+    for (int16_t i = 1; i < 1024; i++)
+    {
+        if (nand_mx35_erase_block(i) != MX35_OK)
+        {
+            // return MX35_FAIL;
+            continue;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
     return MX35_OK;
 }
 
 
-mx35_err_t nand_mx35_write_page(uint16_t start_page, uint8_t *buffer, size_t len, uint16_t *page_address)
+mx35_err_t nand_mx35_write_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address)
 {
-    uint16_t num_pages = (len + PAGE_SIZE_WITHOUT_ECC - 1) / PAGE_SIZE_WITHOUT_ECC;
+    if (!buffer || len == 0 || block >= BLOCK_SIZE || page >= NUM_PAGES_PER_BLOCK)
+        return MX35_INVALID_ARGUMENT;
 
-    DISABLE_WP;
-    nand_mx35_write_enable();
+    mx35_err_t ret = MX35_OK;
+    size_t bytes_written = 0;
+    uint16_t current_block = block;
+    uint8_t current_page = page;
+    uint16_t address = 0;
 
-    for (uint16_t i = 0; i < num_pages; i++)
+    while (bytes_written < len)
     {
-        uint32_t offset = i * PAGE_SIZE_WITHOUT_ECC;
-        size_t chunk = (len - offset > PAGE_SIZE_WITHOUT_ECC) ? PAGE_SIZE_WITHOUT_ECC : (len - offset);
+        size_t chunk = (len - bytes_written > 2048) ? 2048 : (len - bytes_written);
+        address = (current_block << 6) | current_page;
 
-        nand_mx35_program_load(&buffer[offset], chunk);
-        nand_mx35_program_execute(start_page + i);
-
-        if (WaitOperationDone())
+        START_PROGRAM_MODE();
+        ret = nand_mx35_program_load(buffer + bytes_written, chunk);
+        if (ret != MX35_OK)
         {
-            ESP_LOGE(TAG, "Error to programming the buffer");
-            return MX35_FAIL;
+            ESP_LOGE(TAG, "Error in program load no bloco %d, pag %d", current_block, current_page);
+            goto end;
+        }
+
+        nand_mx35_program_execute(address);
+
+        ret = WaitOperationDone();
+        if (ret != MX35_OK)
+        {
+            ESP_LOGE(TAG, "Timeout tPROG no bloco %d", current_block);
+            goto end;
         }
 
         uint8_t status = nand_mx35lf_GET_Features(REG_STATUS);
-        // ESP_LOGW(TAG, "status: %d", status);
-        if (status & 0x04)
+        if (status & PGM_FAIL_BIT)
         {
-            ESP_LOGE(TAG, "Programming error in the block %d, page %d", (start_page + i) / 64, start_page + i);
-            return MX35_FAIL;
+            ESP_LOGE(TAG, "Program fail in the block %d, page %d", current_block, current_page);
+            ret = MX35_WRITE_FAIL;
+            goto end;
+        }
+
+        bytes_written += chunk;
+        current_page++;
+        if (current_page >= NUM_PAGES_PER_BLOCK)
+        {
+            current_page = 0;
+            current_block++;
         }
     }
 
-    nand_mx35_write_disable();
-    ENABLE_WP;
-    uint16_t final_address = start_page + num_pages;
+end:
+    STOP_PROGRAM_MODE();
 
     if (page_address != NULL)
-        *page_address = final_address;
+        *page_address = address;
 
-    ESP_LOGI(TAG, "Recording completed: %u bytes, final position in block %u and page %d", len, Page_To_Block(final_address), final_address);
-    return MX35_OK;
+    if (ret == MX35_OK)
+    {
+        ESP_LOGI(TAG, "Complete sequential writing (B:%u P:%u of %u bytes)", address >> 6, address & 0x3F, len);
+    }
+
+    return ret;
 }
 
 
-mx35_err_t nand_mx35_read_page(uint16_t start_page, uint16_t final_page, uint8_t *buffer, size_t len)
+mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len)
 {
-    if (!buffer)
+    if (!buffer || len == 0 || block >= BLOCK_SIZE || block == 0 || page > NUM_PAGES_PER_BLOCK)
         return MX35_INVALID_ARGUMENT;
 
-    uint32_t current_row = start_page;
+    size_t bytes_read = 0;
+    uint16_t current_block = block;
+    uint8_t current_page = page;
+    uint16_t address = 0x00;
 
-    uint8_t cmd_page_read[4] = {
-        CMD_PAGE_READ,
-        (uint8_t) ((current_row >> 16) & 0xFF),
-        (uint8_t) ((current_row >> 8) & 0xFF),
-        (uint8_t) (current_row & 0xFF),
-    };
-
-    MX35_SELECT;
-    spi_device_polling_transmit(
-        mx35_ctx->spi,
-        &(spi_transaction_t) {
-            .length = 32,
-            .tx_buffer = cmd_page_read,
-        });
-    MX35_UNSELECT;
-
-    vTaskDelay(pdMS_TO_TICKS(1));
-
-    if (WaitOperationDone() != MX35_OK)
-        return MX35_FAIL;
-
-    if (current_row == (final_page - 1))
+    while (bytes_read < len)
     {
-        uint8_t cmd_read_cache[3] = {CMD_READ_FROM_CACHE, 0x00, 0x00};
-        MX35_SELECT;
-        spi_device_polling_transmit(
-            mx35_ctx->spi,
-            &(spi_transaction_t) {
-                .length = sizeof(cmd_read_cache) * 8,
-                .tx_buffer = cmd_read_cache,
-            });
+        size_t chunk = (len - bytes_read > 2048) ? 2048 : (len - bytes_read);
+        address = (current_block << 6) | current_page;
 
-        spi_device_polling_transmit(
-            mx35_ctx->spi,
-            &(spi_transaction_t) {
-                .length = PAGE_SIZE_WITHOUT_ECC * 8,
-                .rxlength = len * 8,
-                .rx_buffer = buffer,
-            });
-        MX35_UNSELECT;
+        uint8_t cmd_page_read[4] = {
+            CMD_PAGE_READ,
+            0x00,
+            (uint8_t) ((address >> 8) & 0xFF),
+            (uint8_t) (address & 0xFF),
+        };
+        spi_write_read(cmd_page_read, sizeof(cmd_page_read), NULL);
 
-        goto end_read;
-    }
+        vTaskDelay(pdMS_TO_TICKS(1));
 
-    for (uint8_t i = start_page; i < final_page; i++)
-    {
-        uint8_t cmd_read_cache[3] = {CMD_READ_FROM_CACHE, 0x00, 0x00};
-        MX35_SELECT;
-        spi_device_polling_transmit(
-            mx35_ctx->spi,
-            &(spi_transaction_t) {
-                .length = sizeof(cmd_read_cache) * 8,
-                .tx_buffer = cmd_read_cache,
-            });
-
-        spi_device_polling_transmit(
-            mx35_ctx->spi,
-            &(spi_transaction_t) {
-                .length = PAGE_SIZE_WITHOUT_ECC * 8,
-                .rxlength = PAGE_SIZE_WITHOUT_ECC * 8,
-                .rx_buffer = buffer + (i * PAGE_SIZE_WITHOUT_ECC),
-            });
-        MX35_UNSELECT;
-
-        if (i < final_page - 1)
+        if (WaitOperationDone() != MX35_OK)
         {
-            current_row++;
-            uint8_t cmd_next_page[4] = {
-                CMD_PAGE_READ_CACHE_SEQUENTIAL,
-                (uint8_t) ((current_row >> 16) & 0xFF),
-                (uint8_t) ((current_row >> 8) & 0xFF),
-                (uint8_t) (current_row & 0xFF),
-            };
-
-            MX35_SELECT;
-            spi_device_polling_transmit(
-                mx35_ctx->spi,
-                &(spi_transaction_t) {
-                    .length = 32,
-                    .tx_buffer = cmd_next_page,
-                });
-            MX35_UNSELECT;
-
-            if (WaitOperationDone() != MX35_OK)
-                return MX35_FAIL;
+            ESP_LOGE(TAG, "Timeout in page read operation");
+            return MX35_FAIL;
         }
 
-        else
+        uint8_t cmd_read_cache[4] = {CMD_READ_FROM_CACHE, FINAL_PAGE_ADDRESS_2048 << 6, 0x00, 0x00};
+        spi_transaction_t t = {
+            .length = sizeof(cmd_read_cache) * 8,
+            .tx_buffer = cmd_read_cache,
+        };
+
+        MX35_SELECT;
+        spi_device_polling_transmit(mx35_ctx.spi, &t);
+        t.length = chunk * 8;
+        t.rxlength = chunk * 8;
+        t.tx_buffer = NULL;
+        t.rx_buffer = buffer + bytes_read;
+        spi_device_polling_transmit(mx35_ctx.spi, &t);
+        MX35_UNSELECT;
+
+        bytes_read += chunk;
+        current_page++;
+        if (current_page >= NUM_PAGES_PER_BLOCK)
         {
-            uint8_t cmd_end[4] = {
-                CMD_PAGE_READ_CACHE_END,
-                (uint8_t) ((current_row >> 16) & 0xFF),
-                (uint8_t) ((current_row >> 8) & 0xFF),
-                (uint8_t) (current_row & 0xFF),
-            };
-
-            MX35_SELECT;
-            spi_device_polling_transmit(
-                mx35_ctx->spi,
-                &(spi_transaction_t) {
-                    .length = 32,
-                    .tx_buffer = cmd_end,
-                });
-            MX35_UNSELECT;
-
-            WaitOperationDone();
+            current_page = 0;
+            current_block++;
         }
+
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 
-end_read:
-    ESP_LOGI(TAG, "Complete sequential reading (%d pages of %d bytes)", final_page, PAGE_SIZE_WITHOUT_ECC);
+    ESP_LOGI(TAG, "Complete sequential reading (B:%u P:%u of %u bytes)", address >> 6, address & 0x3F, len);
     return MX35_OK;
 }
