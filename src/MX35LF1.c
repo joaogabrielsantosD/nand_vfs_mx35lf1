@@ -40,7 +40,7 @@ static uint8_t bad_blocks_count = 0;
 static bool spi_write_read(const uint8_t *cmd, const uint8_t len, uint8_t *rx)
 {
     if (len == 0 || cmd == NULL)
-        return ESP_ERR_INVALID_ARG;  // no need to send anything
+        return false;  // no need to send anything
 
     spi_transaction_t t = {
         .length = len * 8,  // Length in bits
