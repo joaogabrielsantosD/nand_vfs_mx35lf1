@@ -61,6 +61,36 @@ O **bloco 0** é reservado internamente pelo dispositivo e/ou pode conter inform
 
 Para mais informações de Funcionalidades e de uso da biblioteca, tome como referência o exemplo ([example/main/main.c](example/main/main.c)).
 
+## 🔧 Configuração de Hardware
+
+### Pinos SPI
+
+A configuração dos pinos é feita via estrutura `nand_mx35_spi_pins_t`:
+
+```c
+typedef struct
+{
+    gpio_num_t mosi_io;
+    gpio_num_t miso_io;
+    gpio_num_t sclk_io;
+    gpio_num_t cs_io;
+
+    gpio_num_t hd_io;
+    gpio_num_t wp_io;
+
+} nand_mx35_spi_pins_t;
+```
+
+### Configuração do Dispositivo
+
+```c
+typedef struct nand_mx35_dev_t
+{
+    nand_mx35_spi_pins_t spi_pins;
+
+} nand_mx35_config_t;
+```
+
 ## ⚙️ Configuração do SPI
 
 - Frequência SPI configurada para **50 MHz**
