@@ -28,7 +28,7 @@ static uint8_t bad_blocks_count = 0;
 
 //--- Private ----------------------------------------------------------
 
-static esp_err_t spi_write_read(const uint8_t *cmd, const uint8_t len, uint8_t *rx)
+static bool spi_write_read(const uint8_t *cmd, const uint8_t len, uint8_t *rx)
 {
     if (len == 0 || cmd == NULL)
         return ESP_ERR_INVALID_ARG;  // no need to send anything
@@ -49,15 +49,14 @@ static esp_err_t spi_write_read(const uint8_t *cmd, const uint8_t len, uint8_t *
         memcpy(rx, t.rx_data, 4);
     }
 
-    return ret;
+    return ret == ESP_OK ? true : false;
 }
 
 
-static void nand_mx35lf_SET_Features(uint8_t address, uint8_t value)
+static bool nand_mx35lf_SET_Features(uint8_t address, uint8_t value)
 {
     uint8_t cmd[] = {CMD_SET_FEATURES, address, value};
-    spi_write_read(cmd, sizeof(cmd), NULL);
-    return;
+    return spi_write_read(cmd, sizeof(cmd), NULL);
 }
 
 static uint8_t nand_mx35lf_GET_Features(uint8_t address)
@@ -135,7 +134,7 @@ static mx35_err_t nand_mx35_program_load(uint8_t *data, size_t len)
     return ret == ESP_OK ? MX35_OK : MX35_WRITE_FAIL;
 }
 
-static void nand_mx35_program_execute(uint16_t page_address)
+static bool nand_mx35_program_execute(uint16_t page_address)
 {
     uint8_t cmd[4] = {
         CMD_PROGRAM_EXECUTE,
@@ -143,7 +142,8 @@ static void nand_mx35_program_execute(uint16_t page_address)
         (uint8_t) ((page_address >> 8) & 0xFF),
         (uint8_t) (page_address & 0xFF),
     };
-    spi_write_read(cmd, sizeof(cmd), NULL);
+
+    return spi_write_read(cmd, sizeof(cmd), NULL);
 }
 
 
@@ -433,7 +433,7 @@ mx35_err_t nand_mx35_bulk_erase()
             continue;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
     return MX35_OK;
 }
