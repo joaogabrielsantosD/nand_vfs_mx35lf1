@@ -178,7 +178,7 @@ static void nand_mx35_verify_bad_blocks()
     uint8_t b[2];
     for (uint16_t i = 0; i < BLOCK_SIZE; i++)
     {
-        nand_mx35_read_page(i, 0, b, 2);
+        nand_mx35_read_page(i, 0, b, 2, NULL);
         if (b[1] == 0x00 || b[2] == 0x00)
         {
             bad_blocks_map[bad_blocks_count++] = i;
@@ -413,7 +413,7 @@ mx35_err_t nand_mx35_erase_block(uint16_t block)
 
         else
         {
-            ESP_LOGI(TAG, "Block %d erased successfully", block);
+            ESP_LOGD(TAG, "Block %d erased successfully", block);
             ret = MX35_OK;
         }
     }
@@ -506,14 +506,14 @@ end:
 
     if (ret == MX35_OK)
     {
-        ESP_LOGI(TAG, "Complete sequential writing (B:%u P:%u of %u bytes)", address >> 6, address & 0x3F, len);
+        ESP_LOGD(TAG, "Complete sequential writing (B:%u P:%u of %u bytes)", address >> 6, address & 0x3F, len);
     }
 
     return ret;
 }
 
 
-mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len)
+mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address)
 {
     if (!buffer || len == 0 || block >= BLOCK_SIZE || block == 0 || page > NUM_PAGES_PER_BLOCK)
         return MX35_INVALID_ARGUMENT;
@@ -580,6 +580,9 @@ mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, si
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
-    ESP_LOGI(TAG, "Complete sequential reading (B:%u P:%u of %u bytes)", address >> 6, address & 0x3F, len);
+    if (page_address != NULL)
+        *page_address = address;
+
+    ESP_LOGD(TAG, "Complete sequential reading (B:%u P:%u of %u bytes)", address >> 6, address & 0x3F, len);
     return MX35_OK;
 }

@@ -68,6 +68,6 @@ mx35_err_t nand_mx35_bulk_erase(void);
 
 mx35_err_t nand_mx35_write_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address);
 
-mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len);
+mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address);
 
 #endif  // __MX35LF1_H__

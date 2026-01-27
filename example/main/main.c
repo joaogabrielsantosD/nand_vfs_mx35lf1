@@ -2,6 +2,7 @@
 #include <inttypes.h>
 #include <sdkconfig.h>
 #include "esp_err.h"
+#include "esp_timer.h"
 
 #include "string.h"
 
@@ -135,7 +136,11 @@ mx35_err_t load_big_message(void)
     uint16_t address = 0;
     erase_block(block);
 
+    int64_t load_time = esp_timer_get_time();
     mx35_err_t ret = nand_mx35_write_page(block, page, message, BUFFER_SIZE * 2, &address);
+    load_time = esp_timer_get_time() - load_time;
+    ESP_LOGD(TAG, "Time to load big message: %" PRId64 " ms", load_time / 1000);
+    
     if (ret == MX35_OK)
     {
         ESP_LOGI(TAG, "Write ok");
@@ -161,7 +166,7 @@ mx35_err_t read_message(void)
     }
 
     ESP_LOGW("TEST", "Read a buffer");
-    mx35_err_t result = nand_mx35_read_page(1, 0, recv, 2048);
+    mx35_err_t result = nand_mx35_read_page(1, 0, recv, 2048, NULL);
     if (result == MX35_OK)
     {
         ESP_LOGI("MAIN", "Read ok");
@@ -181,7 +186,7 @@ mx35_err_t read_static_message(void)
     }
 
     ESP_LOGW("TEST", "Read a buffer");
-    mx35_err_t result = nand_mx35_read_page(2, 0, recv, 2048);
+    mx35_err_t result = nand_mx35_read_page(2, 0, recv, 2048, NULL);
     if (result == MX35_OK)
     {
         ESP_LOGI("MAIN", "Read ok");
@@ -201,7 +206,12 @@ mx35_err_t read_big_message(void)
     }
 
     ESP_LOGW("TEST", "Read a buffer");
-    mx35_err_t result = nand_mx35_read_page(3, 0, recv, BUFFER_SIZE * 2);
+
+    int64_t read_time = esp_timer_get_time();
+    mx35_err_t result = nand_mx35_read_page(3, 0, recv, BUFFER_SIZE * 2, NULL);
+    read_time = esp_timer_get_time() - read_time;
+    ESP_LOGD(TAG, "Time to read big message: %" PRId64 " ms", read_time / 1000);
+    
     if (result == MX35_OK)
     {
         ESP_LOGI("MAIN", "Read ok");
@@ -224,7 +234,8 @@ void app_main()
     }
     ESP_LOGD(TAG, "NAND MX35 initialized successfully");
 
-    result = erase_all_blocks();
+    result = MX35_OK;
+    // result = erase_all_blocks();
     if (result != MX35_OK)
     {
         ESP_LOGE("MAIN", "Error to erase the block");
@@ -249,15 +260,6 @@ void app_main()
         goto end_example;
     }
     ESP_LOGD(TAG, "Buffer readed successfully");
-
-    result = load_big_message();
-    result = load_message();
-    if (result != MX35_OK)
-    {
-        ESP_LOGE("MAIN", "Error to write the buffer");
-        goto end_example;
-    }
-    ESP_LOGD(TAG, "Buffer written successfully");
 
     result |= load_static_message(0xCC);
     result |= read_static_message();
