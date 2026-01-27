@@ -28,6 +28,15 @@ static uint8_t bad_blocks_count = 0;
 
 //--- Private ----------------------------------------------------------
 
+/**
+ * @brief Perform SPI write and optional read transaction.
+ *
+ * @param[in]  cmd  Command buffer to transmit.
+ * @param[in]  len  Command length in bytes.
+ * @param[out] rx   Buffer to store received data (optional).
+ *
+ * @return true if transaction succeeds, false otherwise.
+ */
 static bool spi_write_read(const uint8_t *cmd, const uint8_t len, uint8_t *rx)
 {
     if (len == 0 || cmd == NULL)
@@ -53,12 +62,27 @@ static bool spi_write_read(const uint8_t *cmd, const uint8_t len, uint8_t *rx)
 }
 
 
+/**
+ * @brief Set NAND feature register.
+ *
+ * @param[in] address Feature register address.
+ * @param[in] value   Value to write.
+ *
+ * @return true if operation succeeds, false otherwise.
+ */
 static bool nand_mx35lf_SET_Features(uint8_t address, uint8_t value)
 {
     uint8_t cmd[] = {CMD_SET_FEATURES, address, value};
     return spi_write_read(cmd, sizeof(cmd), NULL);
 }
 
+/**
+ * @brief Get NAND feature register value.
+ *
+ * @param[in] address Feature register address.
+ *
+ * @return Register value.
+ */
 static uint8_t nand_mx35lf_GET_Features(uint8_t address)
 {
     uint8_t cmd[] = {CMD_GET_FEATURES, address, 0x00};
@@ -67,6 +91,11 @@ static uint8_t nand_mx35lf_GET_Features(uint8_t address)
     return _rx[2];
 }
 
+/**
+ * @brief Wait until NAND operation is completed.
+ *
+ * @return MX35_OK if ready, MX35_FAIL on timeout.
+ */
 static mx35_err_t WaitOperationDone()
 {
     uint8_t status = 0;
@@ -85,6 +114,11 @@ static mx35_err_t WaitOperationDone()
 }
 
 
+/**
+ * @brief Enable NAND write operations.
+ *
+ * @return true if write enable latch is set.
+ */
 static bool nand_mx35_write_enable()
 {
     uint8_t cmd[] = {CMD_WRITE_ENABLE};
@@ -95,6 +129,11 @@ static bool nand_mx35_write_enable()
     return reg == WEL_BIT;
 }
 
+/**
+ * @brief Disable NAND write operations.
+ *
+ * @return true if write enable latch is cleared.
+ */
 static bool nand_mx35_write_disable()
 {
     uint8_t cmd[] = {CMD_WRITE_DISABLE};
@@ -106,6 +145,14 @@ static bool nand_mx35_write_disable()
 }
 
 
+/**
+ * @brief Load data into NAND program buffer.
+ *
+ * @param[in] data Data buffer to write.
+ * @param[in] len  Number of bytes to load.
+ *
+ * @return MX35_OK on success, error code otherwise.
+ */
 static mx35_err_t nand_mx35_program_load(uint8_t *data, size_t len)
 {
     if (!data || len == 0)
@@ -134,6 +181,13 @@ static mx35_err_t nand_mx35_program_load(uint8_t *data, size_t len)
     return ret == ESP_OK ? MX35_OK : MX35_WRITE_FAIL;
 }
 
+/**
+ * @brief Execute NAND program operation.
+ *
+ * @param[in] page_address Page address to program.
+ *
+ * @return true if command is accepted.
+ */
 static bool nand_mx35_program_execute(uint16_t page_address)
 {
     uint8_t cmd[4] = {
@@ -147,6 +201,9 @@ static bool nand_mx35_program_execute(uint16_t page_address)
 }
 
 
+/**
+ * @brief Reset NAND device.
+ */
 static void nand_mx35_reset()
 {
     /* reset the module */
@@ -165,6 +222,11 @@ static void nand_mx35_reset()
     DISABLE_WP;
 }
 
+/**
+ * @brief Read and validate NAND manufacturer and device ID.
+ *
+ * @return true if device matches expected ID.
+ */
 static bool nand_mx35_get_id()
 {
     uint8_t cmd[] = {CMD_READ_MANUFACTURER_ID, 0xFF, 0xFF, 0xFF};
@@ -173,6 +235,9 @@ static bool nand_mx35_get_id()
     return (_rx[2] == MANUFACTURER_ID && _rx[3] == DEVICE_ID);
 }
 
+/**
+ * @brief Scan NAND for bad blocks.
+ */
 static void nand_mx35_verify_bad_blocks()
 {
     uint8_t b[2];
@@ -187,6 +252,13 @@ static void nand_mx35_verify_bad_blocks()
     }
 }
 
+/**
+ * @brief Check if a block is marked as bad.
+ *
+ * @param[in] block Block index.
+ *
+ * @return MX35_OK if block is valid, error otherwise.
+ */
 static mx35_err_t nand_mx35_check_block(uint16_t block)
 {
     for (uint8_t i = 0; i < bad_blocks_count; i++)
@@ -264,7 +336,9 @@ static void Test_GET_Registers_InternalECC()
 
 #endif
 
-
+/**
+ * @brief Enable NAND program mode.
+ */
 static void nand_mx35_start_program_mode(void)
 {
     DISABLE_WP;
@@ -272,6 +346,9 @@ static void nand_mx35_start_program_mode(void)
     nand_mx35_write_enable();
 }
 
+/**
+ * @brief Disable NAND program mode.
+ */
 static void nand_mx35_stop_program_mode(void)
 {
     nand_mx35_write_disable();
