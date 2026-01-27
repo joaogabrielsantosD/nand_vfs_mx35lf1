@@ -10,7 +10,7 @@ Esta biblioteca fornece uma interface simples para inicialização, leitura, esc
 
 - **Fabricante:** Macronix International Co., Ltd.
 - **Part Number:** MX35LF1GE4AB-Z4I-TR
-- **Capacidade:** 1 Gbit (120MB) NAND Flash
+- **Capacidade:** 1 Gbit (128MB) NAND Flash
 - **Interface:** SPI
 - **Tensão:** 3.3 V
 - **Datasheet:**  
