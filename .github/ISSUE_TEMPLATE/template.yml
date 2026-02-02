@@ -1,0 +1,78 @@
+name: Task Padrão (Template)
+description: Toda task do projeto VehicleOTA deve seguir esse padrão.
+
+title: "[TIPO DA TASK (bug, feature, documentação...)] - Título da task"
+
+body:
+  - type: textarea
+    id: descricao
+    attributes:
+      label: Descrição
+      description: "Forneça uma descrição objetiva (2-3 linhas) do propósito da task. Alguém que não sabe do contexto da task deve conseguir entendê-la apenas por essa descrição."
+      placeholder: "Explique brevemente o objetivo da task. Se for de código, mencione os principais componentes afetados (ex: classe `WiFiManager`, API do Servidor...)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: objetivos
+    attributes:
+      label: Objetivos
+      description: "Liste passo a passo os objetivos da task para garantir sua conclusão."
+      placeholder: |
+        - [ ] Objetivos principais
+        - [ ] Sub-tarefas, se houverem
+        - [ ] Resultados mensuráveis
+        - [ ] Critérios de conclusão para review
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: ---
+
+  - type: input
+    id: pre-requisitos
+    attributes:
+      label: Pré-requisitos
+      description: "Se a task estiver no Backlog, descreva o que precisa ser feito para que fique Ready."
+      placeholder: "Explique e forneça [links de outras tasks do projeto](https://github.com/...) ou #link-de-outras-issues-do-repositório"
+    validations:
+      required: false
+
+  - type: input
+    id: dependencias
+    attributes:
+      label: Dependências
+      description: "Se a task estiver Blocked, explique o que está impedindo sua execução."
+      placeholder: "Explique e forneça [links de outras tasks do projeto](https://github.com/...) ou #link-de-outras-issues-do-repositório"
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: "Obs: Os campos de **Pré-requisitos** e **Dependências** são opcionais para tasks que não estão prontas para execução ou estão bloqueadas. Caso contrário, podem ser deixados em branco."
+
+  - type: markdown
+    attributes:
+      value: ---
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Metadados
+        Os seguintes metadados são de preenchimento obrigatório:
+        | Campo          | Valor                        |
+        | -------------- | ---------------------------- |
+        | **Projects:**  | VehicleOTA                   |
+        | **Assignee:**  | (Nome do responsável)        |
+        | **Equipe:**    | envALIVE / appALIVE / eALIVE |
+        | **Categoria:** | (ex. Fluxo Principal)        |
+        | **Prioridade** | Baixa / Média / Alta         |
+    
+  - type: checkboxes
+    id: metadados
+    attributes:
+      label: 'Check'
+      options:
+        - label: "Verifiquei e preenchi todos os metadados obrigatórios"
+          required: true
