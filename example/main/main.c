@@ -26,17 +26,17 @@ mx35_err_t init_module(void)
     };
 
     ESP_LOGW(TAG, "init nand mx35");
-    return nand_mx35_init(&cfg);
+    return mx35_init(&cfg);
 }
 
 mx35_err_t erase_block(uint16_t block)
 {
-    return nand_mx35_erase_block(block);
+    return mx35_erase_block(block);
 }
 
 mx35_err_t erase_all_blocks(void)
 {
-    return nand_mx35_bulk_erase();
+    return mx35_bulk_erase();
 }
 
 mx35_err_t load_message(void)
@@ -60,12 +60,12 @@ mx35_err_t load_message(void)
     uint16_t address = 0;
     erase_block(block);
 
-    mx35_err_t ret = nand_mx35_write_page(block, page, message, BUFFER_SIZE, &address);
+    mx35_err_t ret = mx35_write_page(block, page, message, BUFFER_SIZE, &address);
 
     if (ret == MX35_OK)
     {
         ESP_LOGI(TAG, "Write ok");
-        ESP_LOGI(TAG, "LAST BLOCK: %d AND LAST PAGE: %d", Page_To_Block(address), address & 0x3F);
+        ESP_LOGI(TAG, "LAST BLOCK: %d AND LAST PAGE: %d", mx35_PageAddress_to_Block(address), mx35_PageAddress_to_Page(address));
     }
 
     else
@@ -98,12 +98,12 @@ mx35_err_t load_static_message(uint8_t d)
     uint16_t address = 0;
     erase_block(block);
 
-    mx35_err_t ret = nand_mx35_write_page(block, page, message, BUFFER_SIZE, &address);
+    mx35_err_t ret = mx35_write_page(block, page, message, BUFFER_SIZE, &address);
 
     if (ret == MX35_OK)
     {
         ESP_LOGI(TAG, "Write ok");
-        ESP_LOGI(TAG, "LAST BLOCK: %d AND LAST PAGE: %d", Page_To_Block(address), address & 0x3F);
+        ESP_LOGI(TAG, "LAST BLOCK: %d AND LAST PAGE: %d", mx35_PageAddress_to_Block(address), mx35_PageAddress_to_Page(address));
     }
 
     else
@@ -130,21 +130,21 @@ mx35_err_t load_big_message(void)
         *(message + i) = 0xBB;
     }
 
-    ESP_LOGW(TAG, "Write a buffer");
+    ESP_LOGI(TAG, "Write a buffer");
     uint16_t block = 3;
     uint8_t page = 0;
     uint16_t address = 0;
     erase_block(block);
 
     int64_t load_time = esp_timer_get_time();
-    mx35_err_t ret = nand_mx35_write_page(block, page, message, BUFFER_SIZE * 2, &address);
+    mx35_err_t ret = mx35_write_page(block, page, message, BUFFER_SIZE * 2, &address);
     load_time = esp_timer_get_time() - load_time;
-    ESP_LOGD(TAG, "Time to load big message: %" PRId64 " ms", load_time / 1000);
-    
+    ESP_LOGW(TAG, "Time to load big message: %" PRId64 " ms", load_time / 1000);
+
     if (ret == MX35_OK)
     {
         ESP_LOGI(TAG, "Write ok");
-        ESP_LOGI(TAG, "LAST BLOCK: %d AND LAST PAGE: %d", Page_To_Block(address), address & 0x3F);
+        ESP_LOGI(TAG, "LAST BLOCK: %d AND LAST PAGE: %d", mx35_PageAddress_to_Block(address), mx35_PageAddress_to_Page(address));
     }
 
     else
@@ -165,12 +165,12 @@ mx35_err_t read_message(void)
         return MX35_NO_MEM;
     }
 
-    ESP_LOGW("TEST", "Read a buffer");
-    mx35_err_t result = nand_mx35_read_page(1, 0, recv, 2048, NULL);
+    ESP_LOGI("TEST", "Read a buffer");
+    mx35_err_t result = mx35_read_page(1, 0, recv, 2048, NULL);
     if (result == MX35_OK)
     {
         ESP_LOGI("MAIN", "Read ok");
-        ESP_LOG_BUFFER_HEX("MAIN", recv, 2048);
+        ESP_LOG_BUFFER_HEX_LEVEL("MAIN", recv, 2048, ESP_LOG_DEBUG);
     }
     free(recv);
     return result;
@@ -185,12 +185,12 @@ mx35_err_t read_static_message(void)
         return MX35_NO_MEM;
     }
 
-    ESP_LOGW("TEST", "Read a buffer");
-    mx35_err_t result = nand_mx35_read_page(2, 0, recv, 2048, NULL);
+    ESP_LOGI("TEST", "Read a buffer");
+    mx35_err_t result = mx35_read_page(2, 0, recv, 2048, NULL);
     if (result == MX35_OK)
     {
         ESP_LOGI("MAIN", "Read ok");
-        ESP_LOG_BUFFER_HEX("MAIN", recv, 2048);
+        ESP_LOG_BUFFER_HEX_LEVEL("MAIN", recv, 2048, ESP_LOG_DEBUG);
     }
     free(recv);
     return result;
@@ -208,14 +208,14 @@ mx35_err_t read_big_message(void)
     ESP_LOGW("TEST", "Read a buffer");
 
     int64_t read_time = esp_timer_get_time();
-    mx35_err_t result = nand_mx35_read_page(3, 0, recv, BUFFER_SIZE * 2, NULL);
+    mx35_err_t result = mx35_read_page(3, 0, recv, BUFFER_SIZE * 2, NULL);
     read_time = esp_timer_get_time() - read_time;
-    ESP_LOGD(TAG, "Time to read big message: %" PRId64 " ms", read_time / 1000);
-    
+    ESP_LOGW(TAG, "Time to read big message: %" PRId64 " ms", read_time / 1000);
+
     if (result == MX35_OK)
     {
         ESP_LOGI("MAIN", "Read ok");
-        ESP_LOG_BUFFER_HEX("MAIN", recv, BUFFER_SIZE * 2);
+        ESP_LOG_BUFFER_HEX_LEVEL("MAIN", recv, BUFFER_SIZE * 2, ESP_LOG_DEBUG);
     }
 
     free(recv);
@@ -225,6 +225,8 @@ mx35_err_t read_big_message(void)
 void app_main()
 {
     esp_log_level_set(TAG, ESP_LOG_DEBUG);
+    esp_log_level_set("MAIN", ESP_LOG_INFO);
+    esp_log_level_set("TEST", ESP_LOG_INFO);
 
     mx35_err_t result = init_module();
     if (result != MX35_OK)
@@ -233,6 +235,11 @@ void app_main()
         goto end_example;
     }
     ESP_LOGD(TAG, "NAND MX35 initialized successfully");
+
+    uint8_t bad[20] = {0};
+    mx35_get_bad_block_array(bad, sizeof(bad));
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, bad, mx35_get_bad_block_count(), ESP_LOG_WARN);
+    ESP_LOGW(TAG, "Page Address of the first bad block: 0x%4x", mx35_PageAddress(bad[0], 0));
 
     result = MX35_OK;
     // result = erase_all_blocks();
@@ -261,9 +268,9 @@ void app_main()
     }
     ESP_LOGD(TAG, "Buffer readed successfully");
 
-    result |= load_static_message(0xCC);
+    result |= load_static_message(0xD3);
     result |= read_static_message();
-    result |= load_static_message(0xAA);
+    result |= load_static_message(0xC4);
     result |= read_static_message();
     if (result != MX35_OK)
     {
@@ -276,7 +283,7 @@ end_example:
     if (result == MX35_OK)
     {
         ESP_LOGW(TAG, "Deinit nand mx35");
-        nand_mx35_deinit();
+        mx35_deinit();
         ESP_LOGD(TAG, "NAND MX35 deinitialized successfully");
     }
 }

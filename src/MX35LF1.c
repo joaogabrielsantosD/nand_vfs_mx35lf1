@@ -163,10 +163,7 @@ static mx35_err_t nand_mx35_program_load(uint8_t *data, size_t len)
 
     uint8_t cmd_header[3] = {CMD_PROGRAM_LOAD_X1, 0x00, 0x00};  // start from column 0 (byte 0 of the page)
 
-    spi_transaction_t t = {
-        .tx_buffer = cmd_header,
-        .length = sizeof(cmd_header) * 8,
-    };
+    spi_transaction_t t = {.tx_buffer = cmd_header, .length = sizeof(cmd_header) * 8};
 
     MX35_SELECT;
     esp_err_t ret = spi_device_polling_transmit(mx35_ctx.spi, &t);
@@ -190,13 +187,7 @@ static mx35_err_t nand_mx35_program_load(uint8_t *data, size_t len)
  */
 static bool nand_mx35_program_execute(uint16_t page_address)
 {
-    uint8_t cmd[4] = {
-        CMD_PROGRAM_EXECUTE,
-        0x00,
-        (uint8_t) ((page_address >> 8) & 0xFF),
-        (uint8_t) (page_address & 0xFF),
-    };
-
+    uint8_t cmd[4] = {CMD_PROGRAM_EXECUTE, 0x00, (uint8_t) ((page_address >> 8) & 0xFF), (uint8_t) (page_address & 0xFF)};
     return spi_write_read(cmd, sizeof(cmd), NULL);
 }
 
@@ -207,11 +198,7 @@ static bool nand_mx35_program_execute(uint16_t page_address)
 static void nand_mx35_reset()
 {
     /* reset the module */
-    spi_transaction_t trans_desc = {
-        .flags = SPI_TRANS_USE_TXDATA,
-        .tx_data = {CMD_RESET},
-        .length = 8,
-    };
+    spi_transaction_t trans_desc = {.flags = SPI_TRANS_USE_TXDATA, .tx_data = {CMD_RESET}, .length = 8};
 
     MX35_SELECT;
     spi_device_polling_transmit(mx35_ctx.spi, &trans_desc);
@@ -243,7 +230,7 @@ static void nand_mx35_verify_bad_blocks()
     uint8_t b[2];
     for (uint16_t i = 0; i < BLOCK_SIZE; i++)
     {
-        nand_mx35_read_page(i, 0, b, 2, NULL);
+        mx35_read_page(i, 0, b, 2, NULL);
         if (b[1] == 0x00 || b[2] == 0x00)
         {
             bad_blocks_map[bad_blocks_count++] = i;
@@ -361,7 +348,7 @@ static void nand_mx35_stop_program_mode(void)
 
 //--- Public ----------------------------------------------------------
 
-mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
+mx35_err_t mx35_init(const nand_mx35_config_t *cfg)
 {
     if (cfg == NULL)
         return MX35_INVALID_ARGUMENT;
@@ -396,6 +383,11 @@ mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg)
 
     ESP_LOGI(TAG, "SPI Initialize");
     ret = spi_bus_add_device(mx35_ctx.spi_host, &devcfg, &mx35_ctx.spi);
+    if (ret)
+    {
+        ESP_LOGE(TAG, "SPI bus error in add device");
+        goto cleanup;
+    }
 
     gpio_config_t out_cfg = {
         .pin_bit_mask = BIT64(cfg->spi_pins.cs_io) | BIT64(cfg->spi_pins.hd_io) | BIT64(cfg->spi_pins.wp_io),
@@ -435,21 +427,23 @@ cleanup:
         spi_bus_remove_device(mx35_ctx.spi);
         mx35_ctx.spi = NULL;
     }
+    spi_bus_free(mx35_ctx.spi_host);
     return MX35_FAIL;
 }
 
 
-mx35_err_t nand_mx35_deinit()
+mx35_err_t mx35_deinit()
 {
     if (mx35_ctx.spi)
         spi_bus_remove_device(mx35_ctx.spi);
+    spi_bus_free(mx35_ctx.spi_host);
 
     ESP_LOGW(TAG, "Deinit nand_mx35");
     return MX35_OK;
 }
 
 
-mx35_err_t nand_mx35_erase_block(uint16_t block)
+mx35_err_t mx35_erase_block(uint16_t block)
 {
     if (block >= BLOCK_SIZE || block == 0)
         return MX35_INVALID_ARGUMENT;
@@ -463,12 +457,7 @@ mx35_err_t nand_mx35_erase_block(uint16_t block)
     uint16_t page_address = block << 6;  // Block address[15:6] + Page address[5:0] = 0
     START_PROGRAM_MODE();
 
-    uint8_t cmd[] = {
-        CMD_BLOCK_ERASE,
-        0x00,
-        (uint8_t) ((page_address >> 8) & 0xFF),
-        (uint8_t) (page_address & 0xFF),
-    };
+    uint8_t cmd[] = {CMD_BLOCK_ERASE, 0x00, (uint8_t) ((page_address >> 8) & 0xFF), (uint8_t) (page_address & 0xFF)};
     spi_write_read(cmd, sizeof(cmd), NULL);
     // vTaskDelay(pdMS_TO_TICKS(1));
 
@@ -485,7 +474,7 @@ mx35_err_t nand_mx35_erase_block(uint16_t block)
         if (status & ERS_FAIL_BIT)
         {
             ESP_LOGE(TAG, "Erase error in the block %d", block);
-            ret = MX35_FAIL;
+            ret = MX35_ERASE_FAIL;
         }
 
         else
@@ -500,23 +489,23 @@ mx35_err_t nand_mx35_erase_block(uint16_t block)
 }
 
 
-mx35_err_t nand_mx35_bulk_erase()
+mx35_err_t mx35_bulk_erase()
 {
     for (int16_t i = 1; i < 1024; i++)
     {
-        if (nand_mx35_erase_block(i) != MX35_OK)
+        if (mx35_erase_block(i) != MX35_OK)
         {
             // return MX35_FAIL;
             continue;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // vTaskDelay(pdMS_TO_TICKS(1));
     }
     return MX35_OK;
 }
 
 
-mx35_err_t nand_mx35_write_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address)
+mx35_err_t mx35_write_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address)
 {
     if (!buffer || len == 0 || block >= BLOCK_SIZE || page >= NUM_PAGES_PER_BLOCK)
         return MX35_INVALID_ARGUMENT;
@@ -535,6 +524,7 @@ mx35_err_t nand_mx35_write_page(uint16_t block, uint8_t page, uint8_t *buffer, s
             ESP_LOGW(TAG, "Skipping bad block %d during write operation", current_block);
             current_block++;
             current_page = 0;
+            // return MX35_INVALID_BLOCK;
             continue;
         }
 
@@ -590,7 +580,7 @@ end:
 }
 
 
-mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address)
+mx35_err_t mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address)
 {
     if (!buffer || len == 0 || block >= BLOCK_SIZE || block == 0 || page > NUM_PAGES_PER_BLOCK)
         return MX35_INVALID_ARGUMENT;
@@ -609,21 +599,16 @@ mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, si
             ESP_LOGW(TAG, "Skipping bad block %d during read operation", current_block);
             current_block++;
             current_page = 0;
+            // return MX35_INVALID_BLOCK;
             continue;
         }
 
         size_t chunk = (len - bytes_read > 2048) ? 2048 : (len - bytes_read);
         address = (current_block << 6) | current_page;
 
-        uint8_t cmd_page_read[4] = {
-            CMD_PAGE_READ,
-            0x00,
-            (uint8_t) ((address >> 8) & 0xFF),
-            (uint8_t) (address & 0xFF),
-        };
+        uint8_t cmd_page_read[4] = {CMD_PAGE_READ, 0x00, (uint8_t) ((address >> 8) & 0xFF), (uint8_t) (address & 0xFF)};
         spi_write_read(cmd_page_read, sizeof(cmd_page_read), NULL);
-
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // vTaskDelay(pdMS_TO_TICKS(1));
 
         if (WaitOperationDone() != MX35_OK)
         {
@@ -632,10 +617,7 @@ mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, si
         }
 
         uint8_t cmd_read_cache[4] = {CMD_READ_FROM_CACHE, FINAL_PAGE_ADDRESS_2048 << 6, 0x00, 0x00};
-        spi_transaction_t t = {
-            .length = sizeof(cmd_read_cache) * 8,
-            .tx_buffer = cmd_read_cache,
-        };
+        spi_transaction_t t = {.length = sizeof(cmd_read_cache) * 8, .tx_buffer = cmd_read_cache};
 
         MX35_SELECT;
         spi_device_polling_transmit(mx35_ctx.spi, &t);
@@ -654,7 +636,7 @@ mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, si
             current_block++;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // vTaskDelay(pdMS_TO_TICKS(1));
     }
 
     if (page_address != NULL)
@@ -662,4 +644,35 @@ mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, si
 
     ESP_LOGD(TAG, "Complete sequential reading (B:%u P:%u of %u bytes)", address >> 6, address & 0x3F, len);
     return MX35_OK;
+}
+
+
+uint8_t mx35_PageAddress_to_Page(uint16_t page_address)
+{
+    return (page_address & 0x3F);
+}
+
+uint16_t mx35_PageAddress_to_Block(uint16_t page_address)
+{
+    return (page_address >> 6);
+}
+
+uint16_t mx35_PageAddress(uint16_t block, uint8_t page)
+{
+    if (block >= BLOCK_SIZE || page > NUM_PAGES_PER_BLOCK)
+        return 0;
+    return ((block << 6) | (page & 0x3F));
+}
+
+mx35_err_t mx35_get_bad_block_array(uint8_t *buf, size_t len)
+{
+    if (buf == NULL || len < 20)
+        return MX35_INVALID_ARGUMENT;
+    memcpy(buf, bad_blocks_map, sizeof(bad_blocks_map));
+    return MX35_OK;
+}
+
+uint8_t mx35_get_bad_block_count()
+{
+    return bad_blocks_count;
 }

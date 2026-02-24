@@ -17,9 +17,6 @@
 #include "sdkconfig.h"
 #include "MX35LF1_Registers.h"
 
-#define Block_To_Page(a) ((int) (a * NUM_PAGES_PER_BLOCK))  // Convert the Block address to Page address
-#define Page_To_Block(b) ((int) (b / NUM_PAGES_PER_BLOCK))  // Convert the Page address to Block address
-
 typedef struct
 {
     gpio_num_t mosi_io; /**< SPI MOSI pin */
@@ -56,6 +53,7 @@ typedef uint8_t mx35_err_t;
 #define MX35_INVALID_ARGUMENT 4  // Invalid argument passed to function
 #define MX35_NO_MEM           5  // Memory allocation error
 #define MX35_INVALID_BLOCK    6  // Invalid block (bad block)
+#define MX35_ERASE_FAIL       7  // Error in Erase operation
 
 
 /**
@@ -65,14 +63,14 @@ typedef uint8_t mx35_err_t;
  *
  * @return MX35 operation status.
  */
-mx35_err_t nand_mx35_init(const nand_mx35_config_t *cfg);
+mx35_err_t mx35_init(const nand_mx35_config_t *cfg);
 
 /**
  * @brief Deinitialize the MX35 NAND device.
  *
  * @return MX35 operation status.
  */
-mx35_err_t nand_mx35_deinit(void);
+mx35_err_t mx35_deinit(void);
 
 /**
  * @brief Erase a specific NAND block.
@@ -81,14 +79,14 @@ mx35_err_t nand_mx35_deinit(void);
  *
  * @return MX35 operation status.
  */
-mx35_err_t nand_mx35_erase_block(uint16_t block);
+mx35_err_t mx35_erase_block(uint16_t block);
 
 /**
  * @brief Erase the entire NAND memory.
  *
  * @return MX35 operation status.
  */
-mx35_err_t nand_mx35_bulk_erase(void);
+mx35_err_t mx35_bulk_erase(void);
 
 /**
  * @brief Write data to a NAND page.
@@ -101,7 +99,7 @@ mx35_err_t nand_mx35_bulk_erase(void);
  *
  * @return MX35 operation status.
  */
-mx35_err_t nand_mx35_write_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address);
+mx35_err_t mx35_write_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address);
 
 /**
  * @brief Read data from a NAND page.
@@ -114,6 +112,51 @@ mx35_err_t nand_mx35_write_page(uint16_t block, uint8_t page, uint8_t *buffer, s
  *
  * @return MX35 operation status.
  */
-mx35_err_t nand_mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address);
+mx35_err_t mx35_read_page(uint16_t block, uint8_t page, uint8_t *buffer, size_t len, uint16_t *page_address);
+
+/**
+ * @brief Extract page index from a page address.
+ *
+ * @param[in] page_address Absolute page address.
+ *
+ * @return Page index within the block.
+ */
+uint8_t mx35_PageAddress_to_Page(uint16_t page_address);
+
+/**
+ * @brief Extract block index from a page address.
+ *
+ * @param[in] page_address Absolute page address.
+ *
+ * @return Block index.
+ */
+uint16_t mx35_PageAddress_to_Block(uint16_t page_address);
+
+/**
+ * @brief Build absolute page address from block and page.
+ *
+ * @param[in] block Block index.
+ * @param[in] page  Page index within the block.
+ *
+ * @return Absolute page address, or 0 if arguments are invalid.
+ */
+uint16_t mx35_PageAddress(uint16_t block, uint8_t page);
+
+/**
+ * @brief Get the array of detected bad blocks.
+ *
+ * @param[out] buf Buffer to store bad block indices.
+ * @param[in]  len Size of the provided buffer.
+ *
+ * @return MX35_OK on success, MX35_INVALID_ARGUMENT otherwise.
+ */
+mx35_err_t mx35_get_bad_block_array(uint8_t *buf, size_t len);
+
+/**
+ * @brief Get the number of detected bad blocks.
+ *
+ * @return Number of bad blocks.
+ */
+uint8_t mx35_get_bad_block_count(void);
 
 #endif  // __MX35LF1_H__

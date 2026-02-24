@@ -1,5 +1,6 @@
 .vscode/*
 !.vscode/.clang-format
+.github/*
 
 build/
 sdkconfig
@@ -7,6 +8,7 @@ sdkconfig.old
 
 example/build/
 example/.cache/
+example/.vscode/
 example/sdkconfig
 example/sdkconfig.old
 example/dependencies.lock

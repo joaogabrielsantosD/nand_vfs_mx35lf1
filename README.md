@@ -170,13 +170,22 @@ mx35_err_t nand_mx35_bulk_erase(void);
 #define MX35_INVALID_ARGUMENT 4
 #define MX35_NO_MEM           5
 #define MX35_INVALID_BLOCK    6
+#define MX35_ERASE_FAIL       7
 ```
 
 ## 🧠 Utilidades
 
-Macros para conversão entre bloco e página:
+Funções para conversão entre bloco e página:
 
 ```c
-#define Block_To_Page(a) ((int)(a * NUM_PAGES_PER_BLOCK))
-#define Page_To_Block(b) ((int)(b / NUM_PAGES_PER_BLOCK))
+uint8_t mx35_PageAddress_to_Page(uint16_t page_address);
+uint16_t mx35_PageAddress_to_Block(uint16_t page_address);
+uint16_t mx35_PageAddress(uint16_t block, uint8_t page);
+```
+
+Funções para adquirir os dados de Blocos Corrompidos>
+
+```c
+mx35_err_t mx35_get_bad_block_array(uint8_t *buf, size_t len);
+uint8_t mx35_get_bad_block_count();
 ```
