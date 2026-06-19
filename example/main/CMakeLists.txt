@@ -1,5 +1,7 @@
 idf_component_register(
-    SRCS "main.c"
-    INCLUDE_DIRS ""
-    REQUIRES MX35LF1 esp_timer
+    SRCS
+        "main.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        mx35lf1ge4ab
 )
