@@ -107,7 +107,7 @@ static esp_err_t example_init(nand_handle_t *out)
 /* EXAMPLE 2: Read, program, and erase a single page */
 static esp_err_t example_read_program_erase(nand_handle_t h)
 {
-    section("2. Erase → Program → Read → Verify");
+    section("2. Erase -> Program -> Read -> Verify");
 
     esp_err_t ret;
 
@@ -156,7 +156,7 @@ static esp_err_t example_read_program_erase(nand_handle_t h)
                 break;
             }
         }
-        ESP_LOGI(TAG, "  Post-erase data: %s", all_ff ? "all 0xFF ✓" : "NOT all 0xFF ✗");
+        ESP_LOGI(TAG, "  Post-erase data: %s", all_ff ? "all 0xFF : ok" : "NOT all 0xFF : failed");
         ESP_LOGI(TAG, "  Spare[0]: 0x%02X  ECC: %s", spare_buf[0], ecc == NAND_ECC_OK ? "OK" : ecc == NAND_ECC_CORRECTED ? "corrected" : "UNCORRECTABLE");
     }
 
@@ -206,7 +206,7 @@ static esp_err_t example_read_program_erase(nand_handle_t h)
 
     /* Byte-for-byte comparison */
     bool match = (memcmp(write_buf, read_buf, NAND_PAGE_SIZE) == 0);
-    ESP_LOGI(TAG, "  Data verification: %s", match ? "PASSED ✓" : "FAILED ✗");
+    ESP_LOGI(TAG, "  Data verification: %s", match ? "PASSED" : "FAILED");
     if (!match)
     {
         ret = ESP_FAIL;
@@ -246,8 +246,8 @@ static esp_err_t example_multipage_write(nand_handle_t h)
     {
         /*
          * Fill each page with its page number repeated:
-         *   Page 0 → all 0x00
-         *   Page 1 → all 0x01
+         *   Page 0 -> all 0x00
+         *   Page 1 -> all 0x01
          *   ...
          */
         memset(buf, pg, NAND_PAGE_SIZE);
@@ -277,7 +277,7 @@ static esp_err_t example_multipage_write(nand_handle_t h)
         }
 
         bool ok = (buf[0] == 0xABU) && (buf[1] == pg);
-        ESP_LOGI(TAG, "  Page %u: [0]=0x%02X [1]=0x%02X  %s", pg, buf[0], buf[1], ok ? "✓" : "✗ mismatch");
+        ESP_LOGI(TAG, "  Page %u: [0]=0x%02X [1]=0x%02X  %s", pg, buf[0], buf[1], ok ? "ok" : "mismatch");
     }
 
     free(buf);
@@ -338,7 +338,7 @@ static esp_err_t example_ecc_status(nand_handle_t h)
             case NAND_ECCSR_UNCORRECT: detail = "UNCORRECTABLE"; break;
             default: detail = "unknown"; break;
         }
-        ESP_LOGI(TAG, "  Detailed ECCSR (0x7C): 0x%02X → %s", (unsigned) eccsr, detail);
+        ESP_LOGI(TAG, "  Detailed ECCSR (0x7C): 0x%02X -> %s", (unsigned) eccsr, detail);
     }
 
     /* Disable and re-enable ECC */
@@ -393,7 +393,7 @@ static esp_err_t example_bad_blocks(nand_handle_t h)
 
     bool is_bad = false;
     LOG_RESULT(nand_is_bad_block(h, SCRATCH_BLOCK, &is_bad), "nand_is_bad_block after mark");
-    ESP_LOGI(TAG, "  Block %u bad after mark: %s", SCRATCH_BLOCK, is_bad ? "YES ✓" : "NO ✗ (unexpected)");
+    ESP_LOGI(TAG, "  Block %u bad after mark: %s", SCRATCH_BLOCK, is_bad ? "YES" : "NO (unexpected)");
 
     /*
      * Restore: erase the block (clears the marker) so subsequent tests work.
@@ -401,7 +401,7 @@ static esp_err_t example_bad_blocks(nand_handle_t h)
      */
     LOG_RESULT(nand_erase_block(h, SCRATCH_BLOCK), "nand_erase_block (restore)");
     LOG_RESULT(nand_is_bad_block(h, SCRATCH_BLOCK, &is_bad), "nand_is_bad_block after erase");
-    ESP_LOGI(TAG, "  Block %u bad after erase: %s", SCRATCH_BLOCK, is_bad ? "YES" : "NO ✓ (restored)");
+    ESP_LOGI(TAG, "  Block %u bad after erase: %s", SCRATCH_BLOCK, is_bad ? "YES" : "NO (restored)");
 
     return ESP_OK;
 }
@@ -524,13 +524,13 @@ static void example_address_conversion(void)
 
         ESP_LOGI(
             TAG,
-            "  0x%08" PRIX32 " → block=%4u  page=%2u  col=%4u  "
+            "  0x%08" PRIX32 " -> block=%4u  page=%2u  col=%4u  "
             "round-trip: %s",
             linear,
             addr.block,
             addr.page,
             addr.column,
-            ok ? "✓" : "✗ MISMATCH");
+            ok ? "OK" : "MISMATCH");
     }
 }
 
@@ -633,7 +633,7 @@ static void nand_task(void *pv)
     }
 
     ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "All examples completed successfully ✓");
+    ESP_LOGI(TAG, "All examples completed successfully");
     goto done;
 
 fail:
