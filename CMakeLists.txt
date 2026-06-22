@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS
         "src/mx35lf1ge4ab.c"
-        # "src/ecu_fw_manager.c"
+        "src/ecu_fw_manager.c"
     INCLUDE_DIRS
         "include"
     REQUIRES

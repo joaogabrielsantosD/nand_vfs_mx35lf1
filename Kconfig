@@ -1,16 +1,28 @@
 menu "ECU Firmware NAND MX35 Manager Configuration"
 
-    menu "NAND MX35 Driver"
-        config NAND_MX35_PROTECTED_MODE
-            bool "Enable protected mode for NAND MX35"
-            default n
-            help
-                Enable protected mode for NAND MX35 device.
-    endmenu
+    config MAX_ECU_SLOTS
+        int "Max ECU slots"
+        range 1 32
+        default 10
+        help
+            Maximum number of ECU slots to manage. Each slot can hold one firmware image.
+
+    config NAND_MX35_PROTECTED_MODE
+        bool "Enable protected mode for NAND MX35"
+        default n
+        help
+            Enable protected mode for NAND MX35 device.
 
     menu "Run example"
-        choice ECU_NAND_MANAGER_EXAMPLE
-            prompt "Run example for ecu NAND MX35 manager "
+        config ECU_FW_MANAGER_SEEK_EXAMPLE
+            bool "Run seek example for ECU Firmware Manager"
+            depends on RUN_ECU_FW_MANAGER_EXAMPLE
+            default n
+            help
+                Select to run seek example for ECU Firmware Manager.
+
+        choice
+            prompt"Run example for ecu NAND MX35 manager"
             default RUN_ECU_FW_MANAGER_EXAMPLE
             help
                 Select to run example for NAND MX35 device.
@@ -28,6 +40,12 @@ menu "ECU Firmware NAND MX35 Manager Configuration"
             default n
             help
                 Enable debug messages for nand mx35 api.
+
+        config EALIVE_ECU_FW_MANAGER_DEBUG
+            bool "Enable debug for ecu firmware manager"
+            default n
+            help
+                Enable debug messages for ecu firmware manager.
     endmenu
 
 endmenu
