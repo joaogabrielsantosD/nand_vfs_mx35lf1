@@ -194,6 +194,7 @@ typedef struct
     int pin_hold;               /**< HOLD# / SIO3 (-1 if unused)             */
     int clock_speed_hz;         /**< SPI clock frequency in Hz (≤ 104 MHz) */
     nand_io_mode_t io_mode;     /**< Desired I/O width                        */
+    bool disable_ecc;           /**< True to disable the ECC feature, false otherwise */
     int dma_chan;               /**< DMA channel — use SPI_DMA_CH_AUTO        */
 } nand_config_t;
 

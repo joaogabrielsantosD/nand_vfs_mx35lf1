@@ -6,11 +6,12 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "sdkconfig.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-static const char NAND_LOG_TAG[] = "MX35LF1GE4AB";
+static const char TAG[] = "MX35LF1GE4AB";
 
 struct nand_dev_t
 {
@@ -33,7 +34,7 @@ struct nand_dev_t
     {                                                                  \
         if (xSemaphoreTake((h)->mutex, pdMS_TO_TICKS(5000)) != pdTRUE) \
         {                                                              \
-            ESP_LOGE(NAND_LOG_TAG, "Mutex timeout");                   \
+            ESP_LOGE(TAG, "Mutex timeout");                            \
             return ESP_ERR_TIMEOUT;                                    \
         }                                                              \
     } while (0)
@@ -41,25 +42,25 @@ struct nand_dev_t
 #define NAND_UNLOCK(h) xSemaphoreGive((h)->mutex)
 
 /** Guard: return ESP_ERR_INVALID_STATE if the handle is NULL or not initialized. */
-#define NAND_CHECK(h)                                                  \
-    do                                                                 \
-    {                                                                  \
-        if (!(h) || !(h)->initialized)                                 \
-        {                                                              \
-            ESP_LOGE(NAND_LOG_TAG, "Invalid or uninitialized handle"); \
-            return ESP_ERR_INVALID_STATE;                              \
-        }                                                              \
+#define NAND_CHECK(h)                                         \
+    do                                                        \
+    {                                                         \
+        if (!(h) || !(h)->initialized)                        \
+        {                                                     \
+            ESP_LOGE(TAG, "Invalid or uninitialized handle"); \
+            return ESP_ERR_INVALID_STATE;                     \
+        }                                                     \
     } while (0)
 
 /** Guard: return ESP_ERR_INVALID_ARG if a pointer argument is NULL. */
-#define NAND_CHECK_ARG(p)                            \
-    do                                               \
-    {                                                \
-        if (!(p))                                    \
-        {                                            \
-            ESP_LOGE(NAND_LOG_TAG, "NULL argument"); \
-            return ESP_ERR_INVALID_ARG;              \
-        }                                            \
+#define NAND_CHECK_ARG(p)                   \
+    do                                      \
+    {                                       \
+        if (!(p))                           \
+        {                                   \
+            ESP_LOGE(TAG, "NULL argument"); \
+            return ESP_ERR_INVALID_ARG;     \
+        }                                   \
     } while (0)
 
 /** Propagate an error immediately if @p x returns != ESP_OK. */
@@ -131,7 +132,7 @@ static esp_err_t spi_xfer(struct nand_dev_t *h, const uint8_t *tx, uint8_t *rx, 
 
     if (len > NAND_SPI_MAX_TRANSFER)
     {
-        ESP_LOGE(NAND_LOG_TAG, "spi_xfer: len=%zu exceeds max=%u", len, NAND_SPI_MAX_TRANSFER);
+        ESP_LOGE(TAG, "spi_xfer: len=%zu exceeds max=%u", len, NAND_SPI_MAX_TRANSFER);
         return ESP_ERR_INVALID_SIZE;
     }
 
@@ -156,7 +157,7 @@ static esp_err_t spi_xfer(struct nand_dev_t *h, const uint8_t *tx, uint8_t *rx, 
 
     if (ret != ESP_OK)
     {
-        ESP_LOGE(NAND_LOG_TAG, "SPI transfer failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "SPI transfer failed: %s", esp_err_to_name(ret));
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -175,6 +176,30 @@ static inline esp_err_t spi_write(struct nand_dev_t *h, const uint8_t *tx, size_
     return spi_xfer(h, tx, NULL, len);
 }
 
+/**
+ * @brief Issue WRITE ENABLE (06h) — must be called while the mutex is held.
+ *
+ * Sets the WEL bit, which is required before any PROGRAM LOAD,
+ * PROGRAM EXECUTE, or BLOCK ERASE command.
+ */
+static esp_err_t nand_write_enable_locked(struct nand_dev_t *h)
+{
+    uint8_t cmd = NAND_CMD_WRITE_ENABLE;
+    return spi_write(h, &cmd, 1U);
+}
+
+/**
+ * @brief Issue WRITE DISABLE (04h) — must be called while the mutex is held.
+ *
+ * Disable the WEL bit, blocking the PROGRAM LOAD,
+ * PROGRAM EXECUTE, or BLOCK ERASE command.
+ */
+static esp_err_t nand_write_disable_locked(struct nand_dev_t *h)
+{
+    uint8_t cmd = NAND_CMD_WRITE_DISABLE;
+    return spi_write(h, &cmd, 1U);
+}
+
 /* ------------ Public Functions ------------ */
 
 esp_err_t nand_init(nand_handle_t *out_handle, const nand_config_t *config)
@@ -184,15 +209,15 @@ esp_err_t nand_init(nand_handle_t *out_handle, const nand_config_t *config)
     NAND_CHECK_ARG(out_handle);
     NAND_CHECK_ARG(config);
 
-#if CONFIG_EALIVE_NAND_MX35_DEBUG
-    esp_log_level_set(NAND_LOG_TAG, ESP_LOG_DEBUG);
+#ifdef CONFIG_EALIVE_NAND_MX35_DEBUG
+    esp_log_level_set(TAG, ESP_LOG_DEBUG);
 #endif
 
     /* Allocate the opaque driver handle */
     struct nand_dev_t *h = calloc(1, sizeof(struct nand_dev_t));
     if (!h)
     {
-        ESP_LOGE(NAND_LOG_TAG, "No memory for driver handle");
+        ESP_LOGE(TAG, "No memory for driver handle");
         return ESP_ERR_NO_MEM;
     }
 
@@ -201,7 +226,7 @@ esp_err_t nand_init(nand_handle_t *out_handle, const nand_config_t *config)
     h->dma_rx = heap_caps_malloc(NAND_SPI_MAX_TRANSFER, MALLOC_CAP_DMA);
     if (!h->dma_tx || !h->dma_rx)
     {
-        ESP_LOGE(NAND_LOG_TAG, "No DMA memory (%u bytes x 2)", NAND_SPI_MAX_TRANSFER);
+        ESP_LOGE(TAG, "No DMA memory (%u bytes x 2)", NAND_SPI_MAX_TRANSFER);
         ret = ESP_ERR_NO_MEM;
         goto fail;
     }
@@ -210,7 +235,7 @@ esp_err_t nand_init(nand_handle_t *out_handle, const nand_config_t *config)
     h->mutex = xSemaphoreCreateMutex();
     if (!h->mutex)
     {
-        ESP_LOGE(NAND_LOG_TAG, "Failed to create mutex");
+        ESP_LOGE(TAG, "Failed to create mutex");
         ret = ESP_ERR_NO_MEM;
         goto fail_alloc;
     }
@@ -239,7 +264,7 @@ esp_err_t nand_init(nand_handle_t *out_handle, const nand_config_t *config)
     ret = spi_bus_add_device(config->spi_host, &devcfg, &h->spi);
     if (ret != ESP_OK)
     {
-        ESP_LOGE(NAND_LOG_TAG, "spi_bus_add_device failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "spi_bus_add_device failed: %s", esp_err_to_name(ret));
         goto fail_mutex;
     }
 
@@ -273,7 +298,7 @@ esp_err_t nand_init(nand_handle_t *out_handle, const nand_config_t *config)
     if (mfr != NAND_MANUFACTURER_ID || dev_id != NAND_DEVICE_ID)
     {
         ESP_LOGE(
-            NAND_LOG_TAG,
+            TAG,
             "Device ID mismatch: got MFR=0x%02X DEV=0x%02X, "
             "expected 0x%02X / 0x%02X",
             mfr,
@@ -291,6 +316,12 @@ esp_err_t nand_init(nand_handle_t *out_handle, const nand_config_t *config)
     h->info.pages_per_block = NAND_PAGES_PER_BLOCK;
     h->info.page_size = NAND_PAGE_SIZE;
     h->info.spare_size = NAND_SPARE_SIZE;
+
+    ret = nand_ecc_enable(h, !config->disable_ecc);
+    if (ret != ESP_OK)
+    {
+        goto fail_spi;
+    }
 
     /* Read current ECC and Quad state from the Configuration register */
     uint8_t feat = 0U;
@@ -313,15 +344,28 @@ esp_err_t nand_init(nand_handle_t *out_handle, const nand_config_t *config)
         }
     }
 
+#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
+    /* Protect all blocks for default */
+    ret = nand_protect_all(h);
+#else
     /* Remove all block protection so the array is writable */
     ret = nand_unprotect_all(h);
+#endif
     if (ret != ESP_OK)
     {
         goto fail_spi;
     }
 
+#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
+    ret = nand_write_disable_locked(h);
+    if (ret != ESP_OK)
+    {
+        goto fail_spi;
+    }
+#endif
+
     ESP_LOGI(
-        NAND_LOG_TAG,
+        TAG,
         "Ready: MFR=0x%02X DEV=0x%02X  blocks=%" PRId32 " pages/block=%" PRId32 " ECC=%s  I/O=x%d  clock=%d Hz",
         mfr,
         dev_id,
@@ -357,7 +401,7 @@ esp_err_t nand_deinit(nand_handle_t h)
     heap_caps_free(dev->dma_tx);
     heap_caps_free(dev->dma_rx);
     free(dev);
-    ESP_LOGI(NAND_LOG_TAG, "Driver released");
+    ESP_LOGI(TAG, "Driver released");
     return ESP_OK;
 }
 
@@ -371,7 +415,7 @@ esp_err_t nand_reset(nand_handle_t h)
     NAND_UNLOCK(dev);
     if (ret == ESP_OK)
     {
-        ESP_LOGD(NAND_LOG_TAG, "RESET sent");
+        ESP_LOGD(TAG, "RESET sent");
     }
     return ret;
 }
@@ -405,7 +449,7 @@ esp_err_t nand_read_id(nand_handle_t h, uint8_t *manufacturer, uint8_t *device)
     *manufacturer = rx[2];
     *device = rx[3];
 
-    ESP_LOGD(NAND_LOG_TAG, "READ ID -> MFR=0x%02X DEV=0x%02X", *manufacturer, *device);
+    ESP_LOGD(TAG, "READ ID -> MFR=0x%02X DEV=0x%02X", *manufacturer, *device);
     return ESP_OK;
 }
 
@@ -485,19 +529,19 @@ esp_err_t nand_wait_ready(nand_handle_t h, uint32_t timeout_ms)
             /* Device is ready — inspect the status bits for operation errors */
             if (sr & NAND_SR_ERS_FAIL)
             {
-                ESP_LOGE(NAND_LOG_TAG, "Erase failure (SR=0x%02X)", sr);
+                ESP_LOGE(TAG, "Erase failure (SR=0x%02X)", sr);
                 return ESP_ERR_INVALID_STATE;
             }
 
             if (sr & NAND_SR_PGM_FAIL)
             {
-                ESP_LOGE(NAND_LOG_TAG, "Program failure (SR=0x%02X)", sr);
+                ESP_LOGE(TAG, "Program failure (SR=0x%02X)", sr);
                 return ESP_ERR_INVALID_STATE;
             }
 
             if ((sr & NAND_SR_ECC_MASK) == NAND_SR_ECC_UNCORRECT)
             {
-                ESP_LOGE(NAND_LOG_TAG, "Uncorrectable ECC error (SR=0x%02X)", sr);
+                ESP_LOGE(TAG, "Uncorrectable ECC error (SR=0x%02X)", sr);
                 return ESP_ERR_INVALID_CRC;
             }
             return ESP_OK;
@@ -505,7 +549,7 @@ esp_err_t nand_wait_ready(nand_handle_t h, uint32_t timeout_ms)
 
         if (esp_timer_get_time() > deadline_us)
         {
-            ESP_LOGE(NAND_LOG_TAG, "wait_ready timeout (%u ms, SR=0x%02X)", (unsigned) timeout_ms, sr);
+            ESP_LOGE(TAG, "wait_ready timeout (%u ms, SR=0x%02X)", (unsigned) timeout_ms, sr);
             return ESP_ERR_TIMEOUT;
         }
 
@@ -520,7 +564,7 @@ esp_err_t nand_ecc_enable(nand_handle_t h, bool enable)
     struct nand_dev_t *dev = h;
 
     uint8_t feat = 0U;
-    RET_ON_ERR(nand_get_feature(h, NAND_FEAT_SECURE_OTP, &feat));
+    RET_ON_ERR(nand_get_feature(dev, NAND_FEAT_SECURE_OTP, &feat));
 
     if (enable)
     {
@@ -532,10 +576,10 @@ esp_err_t nand_ecc_enable(nand_handle_t h, bool enable)
         feat &= ~NAND_OTP_ECC_EN;
     }
 
-    RET_ON_ERR(nand_set_feature(h, NAND_FEAT_SECURE_OTP, feat));
+    RET_ON_ERR(nand_set_feature(dev, NAND_FEAT_SECURE_OTP, feat));
 
     dev->info.ecc_enabled = enable;
-    ESP_LOGI(NAND_LOG_TAG, "Internal ECC: %s", enable ? "enabled" : "disabled");
+    ESP_LOGI(TAG, "Internal ECC: %s", enable ? "enabled" : "disabled");
     return ESP_OK;
 }
 
@@ -559,21 +603,21 @@ esp_err_t nand_read_ecc_status(nand_handle_t h, nand_eccsr_t *eccsr)
     if (ret == ESP_OK)
     {
         *eccsr = (nand_eccsr_t) (rx[2] & 0x0FU);
-        ESP_LOGD(NAND_LOG_TAG, "ECCSR=0x%02X", (unsigned) *eccsr);
+        ESP_LOGD(TAG, "ECCSR=0x%02X", (unsigned) *eccsr);
     }
     return ret;
 }
 
 esp_err_t nand_unprotect_all(nand_handle_t h)
 {
-    ESP_LOGD(NAND_LOG_TAG, "Removing all block protection");
+    ESP_LOGD(TAG, "Removing all block protection");
     /* BP[2:0] = 000 -> all unlocked (datasheet Table 7) */
     return nand_set_feature(h, NAND_FEAT_BLOCK_PROT, 0x00U);
 }
 
 esp_err_t nand_protect_all(nand_handle_t h)
 {
-    ESP_LOGD(NAND_LOG_TAG, "Protecting entire array");
+    ESP_LOGD(TAG, "Protecting entire array");
     /* BP[2:0] = 111 -> all locked (datasheet Table 7) */
     return nand_set_feature(h, NAND_FEAT_BLOCK_PROT, NAND_BP_BP0 | NAND_BP_BP1 | NAND_BP_BP2);
 }
@@ -583,32 +627,18 @@ esp_err_t nand_set_protection(nand_handle_t h, uint8_t val)
     return nand_set_feature(h, NAND_FEAT_BLOCK_PROT, val);
 }
 
-/**
- * @brief Issue WRITE ENABLE (06h) — must be called while the mutex is held.
- *
- * Sets the WEL bit, which is required before any PROGRAM LOAD,
- * PROGRAM EXECUTE, or BLOCK ERASE command.
- */
-static esp_err_t nand_write_enable_locked(struct nand_dev_t *dev)
-{
-    uint8_t cmd = NAND_CMD_WRITE_ENABLE;
-    return spi_write(dev, &cmd, 1U);
-}
-
 esp_err_t nand_read_page(nand_handle_t h, uint16_t block, uint8_t page, uint8_t *data, uint8_t *spare, nand_ecc_status_t *ecc_stat)
 {
     NAND_CHECK(h);
+    NAND_CHECK_ARG(data);
+    NAND_CHECK_ARG(spare);
+
     if (block >= NAND_BLOCKS_TOTAL)
     {
         return ESP_ERR_INVALID_ARG;
     }
 
     if (page >= NAND_PAGES_PER_BLOCK)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    if (!data && !spare)
     {
         return ESP_ERR_INVALID_ARG;
     }
@@ -640,11 +670,11 @@ esp_err_t nand_read_page(nand_handle_t h, uint16_t block, uint8_t page, uint8_t 
 
     /* Wait for the array-to-cache transfer to complete (outside the lock) */
     uint32_t tmo = dev->info.ecc_enabled ? NAND_TIMEOUT_READ_MS * 3U : NAND_TIMEOUT_READ_MS;
-    ret = nand_wait_ready(h, tmo);
+    ret = nand_wait_ready(dev, tmo);
 
     /* Capture ECC status from the status register */
     uint8_t sr = 0U;
-    nand_get_status(h, &sr);
+    nand_get_status(dev, &sr);
     if (ecc_stat)
     {
         uint8_t ecc_bits = sr & NAND_SR_ECC_MASK;
@@ -656,7 +686,7 @@ esp_err_t nand_read_page(nand_handle_t h, uint16_t block, uint8_t page, uint8_t 
         else if (ecc_bits == NAND_SR_ECC_CORRECTED)
         {
             *ecc_stat = NAND_ECC_CORRECTED;
-            ESP_LOGW(NAND_LOG_TAG, "ECC corrected error: block=%u page=%u", block, page);
+            ESP_LOGW(TAG, "ECC corrected error: block=%u page=%u", block, page);
         }
 
         else
@@ -667,7 +697,7 @@ esp_err_t nand_read_page(nand_handle_t h, uint16_t block, uint8_t page, uint8_t 
 
     if (ret == ESP_ERR_INVALID_CRC)
     {
-        ESP_LOGE(NAND_LOG_TAG, "Uncorrectable ECC: block=%u page=%u", block, page);
+        ESP_LOGE(TAG, "Uncorrectable ECC: block=%u page=%u", block, page);
         return ret;
     }
 
@@ -792,6 +822,8 @@ esp_err_t nand_read(nand_handle_t h, nand_addr_t addr, uint8_t *buf, size_t len)
 esp_err_t nand_program_page(nand_handle_t h, uint16_t block, uint8_t page, const uint8_t *data, const uint8_t *spare)
 {
     NAND_CHECK(h);
+    NAND_CHECK_ARG(data);
+
     if (block >= NAND_BLOCKS_TOTAL)
     {
         return ESP_ERR_INVALID_ARG;
@@ -801,7 +833,6 @@ esp_err_t nand_program_page(nand_handle_t h, uint16_t block, uint8_t page, const
     {
         return ESP_ERR_INVALID_ARG;
     }
-    NAND_CHECK_ARG(data);
 
     struct nand_dev_t *dev = h;
     esp_err_t ret;
@@ -811,6 +842,15 @@ esp_err_t nand_program_page(nand_handle_t h, uint16_t block, uint8_t page, const
     build_col_addr(0x0000U, NAND_WRAP_2112, ca);
 
     NAND_LOCK(dev);
+
+#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
+    ret = nand_unprotect_all(dev);
+    if (ret != ESP_OK)
+    {
+        NAND_UNLOCK(dev);
+        return ret;
+    }
+#endif
 
     /*
      * Step 1 — WRITE ENABLE (06h), datasheet Figure 4.
@@ -853,7 +893,7 @@ esp_err_t nand_program_page(nand_handle_t h, uint16_t block, uint8_t page, const
     ret = spi_device_transmit(dev->spi, &t);
     if (ret != ESP_OK)
     {
-        ESP_LOGE(NAND_LOG_TAG, "PROGRAM LOAD failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "PROGRAM LOAD failed: %s", esp_err_to_name(ret));
         NAND_UNLOCK(dev);
         return ret;
     }
@@ -874,22 +914,40 @@ esp_err_t nand_program_page(nand_handle_t h, uint16_t block, uint8_t page, const
     }
 
     /* Poll for completion outside the mutex */
-    ret = nand_wait_ready(h, NAND_TIMEOUT_PROG_MS);
+    ret = nand_wait_ready(dev, NAND_TIMEOUT_PROG_MS);
     if (ret != ESP_OK)
     {
-        ESP_LOGE(NAND_LOG_TAG, "Program failed: block=%u page=%u err=%s", block, page, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Program failed: block=%u page=%u err=%s", block, page, esp_err_to_name(ret));
     }
 
     else
     {
-        ESP_LOGD(NAND_LOG_TAG, "Program OK: block=%u page=%u", block, page);
+        ESP_LOGD(TAG, "Program OK: block=%u page=%u", block, page);
     }
+
+#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
+    NAND_LOCK(dev);
+    ret = nand_protect_all(dev);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to protect the blocks");
+    }
+
+    ret = nand_write_disable_locked(dev);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to disable WEL bit");
+    }
+    NAND_UNLOCK(dev);
+#endif
+
     return ret;
 }
 
 esp_err_t nand_erase_block(nand_handle_t h, uint16_t block)
 {
     NAND_CHECK(h);
+
     if (block >= NAND_BLOCKS_TOTAL)
     {
         return ESP_ERR_INVALID_ARG;
@@ -902,6 +960,15 @@ esp_err_t nand_erase_block(nand_handle_t h, uint16_t block)
     build_row_addr(block, 0U, ra);
 
     NAND_LOCK(dev);
+
+#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
+    ret = nand_unprotect_all(dev);
+    if (ret != ESP_OK)
+    {
+        NAND_UNLOCK(dev);
+        return ret;
+    }
+#endif
 
     /* WRITE ENABLE */
     ret = nand_write_enable_locked(dev);
@@ -927,16 +994,33 @@ esp_err_t nand_erase_block(nand_handle_t h, uint16_t block)
         return ret;
     }
 
-    ret = nand_wait_ready(h, NAND_TIMEOUT_ERASE_MS);
+    ret = nand_wait_ready(dev, NAND_TIMEOUT_ERASE_MS);
     if (ret != ESP_OK)
     {
-        ESP_LOGE(NAND_LOG_TAG, "Erase failed: block=%u err=%s", block, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Erase failed: block=%u err=%s", block, esp_err_to_name(ret));
     }
 
     else
     {
-        ESP_LOGD(NAND_LOG_TAG, "Erase OK: block=%u", block);
+        ESP_LOGD(TAG, "Erase OK: block=%u", block);
     }
+
+#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
+    NAND_LOCK(dev);
+    ret = nand_protect_all(dev);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to protect the blocks");
+    }
+
+    ret = nand_write_disable_locked(dev);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to disable WEL bit");
+    }
+    NAND_UNLOCK(dev);
+#endif
+
     return ret;
 }
 
@@ -944,6 +1028,7 @@ esp_err_t nand_is_bad_block(nand_handle_t h, uint16_t block, bool *is_bad)
 {
     NAND_CHECK(h);
     NAND_CHECK_ARG(is_bad);
+
     if (block >= NAND_BLOCKS_TOTAL)
     {
         return ESP_ERR_INVALID_ARG;
@@ -974,7 +1059,7 @@ esp_err_t nand_is_bad_block(nand_handle_t h, uint16_t block, bool *is_bad)
 
     if (*is_bad)
     {
-        ESP_LOGW(NAND_LOG_TAG, "Bad block detected: %u (spare0[0]=0x%02X spare1[0]=0x%02X)", block, spare0[0], spare1[0]);
+        ESP_LOGW(TAG, "Bad block detected: %u (spare0[0]=0x%02X spare1[0]=0x%02X)", block, spare0[0], spare1[0]);
     }
     return ESP_OK;
 }
@@ -996,6 +1081,15 @@ esp_err_t nand_mark_bad_block(nand_handle_t h, uint16_t block)
     build_col_addr(NAND_PAGE_SIZE, 0U, ca);
 
     NAND_LOCK(dev);
+
+#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
+    ret = nand_unprotect_all(dev);
+    if (ret != ESP_OK)
+    {
+        NAND_UNLOCK(dev);
+        return ret;
+    }
+#endif
 
     ret = nand_write_enable_locked(dev);
     if (ret != ESP_OK)
@@ -1032,13 +1126,30 @@ esp_err_t nand_mark_bad_block(nand_handle_t h, uint16_t block)
 
     if (ret == ESP_OK)
     {
-        ret = nand_wait_ready(h, NAND_TIMEOUT_PROG_MS);
+        ret = nand_wait_ready(dev, NAND_TIMEOUT_PROG_MS);
     }
 
     if (ret == ESP_OK)
     {
-        ESP_LOGW(NAND_LOG_TAG, "Block %u marked as bad", block);
+        ESP_LOGW(TAG, "Block %u marked as bad", block);
     }
+
+#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
+    NAND_LOCK(dev);
+    ret = nand_protect_all(dev);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to protect the blocks");
+    }
+
+    ret = nand_write_disable_locked(dev);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to disable WEL bit");
+    }
+    NAND_UNLOCK(dev);
+#endif
+
     return ret;
 }
 
@@ -1048,7 +1159,7 @@ esp_err_t nand_quad_enable(nand_handle_t h, bool enable)
     struct nand_dev_t *dev = h;
 
     uint8_t feat = 0U;
-    RET_ON_ERR(nand_get_feature(h, NAND_FEAT_SECURE_OTP, &feat));
+    RET_ON_ERR(nand_get_feature(dev, NAND_FEAT_SECURE_OTP, &feat));
 
     if (enable)
     {
@@ -1060,10 +1171,10 @@ esp_err_t nand_quad_enable(nand_handle_t h, bool enable)
         feat &= ~NAND_OTP_QE;
     }
 
-    RET_ON_ERR(nand_set_feature(h, NAND_FEAT_SECURE_OTP, feat));
+    RET_ON_ERR(nand_set_feature(dev, NAND_FEAT_SECURE_OTP, feat));
 
     dev->info.quad_enabled = enable;
-    ESP_LOGI(NAND_LOG_TAG, "Quad I/O: %s", enable ? "enabled" : "disabled");
+    ESP_LOGI(TAG, "Quad I/O: %s", enable ? "enabled" : "disabled");
     return ESP_OK;
 }
 
