@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char ECU_LOG_TAG[] = "ECU_MGR";
+static const char TAG[] = "ECU_MGR";
 
 struct ecu_mgr_t
 {
@@ -26,17 +26,27 @@ struct ecu_mgr_t
     {                                                                   \
         if (xSemaphoreTake((m)->mutex, pdMS_TO_TICKS(10000)) != pdTRUE) \
         {                                                               \
-            ESP_LOGE(ECU_LOG_TAG, "Mutex timeout");                     \
+            ESP_LOGE(TAG, "Mutex timeout");                             \
             return ESP_ERR_TIMEOUT;                                     \
         }                                                               \
     } while (0)
 
 #define MGR_UNLOCK(m) xSemaphoreGive((m)->mutex)
 
-#define MGR_CHECK(m)                                                                        \
-    do                                                                                      \
-    {                                                                                       \
-        if (!(m) || !((struct ecu_mgr_t *) (m))->initialized) return ESP_ERR_INVALID_STATE; \
+#define MGR_CHECK(m)                                                 \
+    do                                                               \
+    {                                                                \
+        if (!(m) || !(m)->initialized) return ESP_ERR_INVALID_STATE; \
+    } while (0)
+
+#define MGR_CHECK_ARG(p)                    \
+    do                                      \
+    {                                       \
+        if (!(p))                           \
+        {                                   \
+            ESP_LOGE(TAG, "NULL argument"); \
+            return ESP_ERR_INVALID_ARG;     \
+        }                                   \
     } while (0)
 
 #define RET_ON_ERR(x)                \
@@ -47,7 +57,7 @@ struct ecu_mgr_t
     } while (0)
 
 /** Update a running CRC32 with additional data (IEEE 802.3). */
-uint32_t ecu_crc32_update(uint32_t crc, const uint8_t *data, size_t len)
+static uint32_t ecu_crc32_update(uint32_t crc, const uint8_t *data, size_t len)
 {
     for (size_t i = 0; i < len; i++)
     {
@@ -61,12 +71,12 @@ uint32_t ecu_crc32_update(uint32_t crc, const uint8_t *data, size_t len)
 }
 
 /** Compute the full CRC32 of a buffer (convenience wrapper). */
-uint32_t ecu_crc32(const uint8_t *data, size_t len)
+static uint32_t ecu_crc32(const uint8_t *data, size_t len)
 {
     return ~ecu_crc32_update(0xFFFFFFFFUL, data, len);
 }
 
-uint32_t ecu_bytes_to_blocks(uint32_t data_size)
+static uint32_t ecu_bytes_to_blocks(uint32_t data_size)
 {
     if (data_size == 0U)
     {
@@ -165,7 +175,7 @@ static esp_err_t sb_save(struct ecu_mgr_t *m)
     size_t bbt_sz = sizeof(ecu_bbt_t);
     RET_ON_ERR(nand_write_pg(m->nand, BLK, ECU_BBT_PAGE, &m->bbt, bbt_sz < NAND_PAGE_SIZE ? bbt_sz : NAND_PAGE_SIZE));
 
-    ESP_LOGD(ECU_LOG_TAG, "Superblock saved: slots=%" PRId16 " bad=%" PRId32, m->sb.num_slots, m->bbt.num_bad_blocks);
+    ESP_LOGD(TAG, "Superblock saved: slots=%" PRId16 " bad=%" PRId32, m->sb.num_slots, m->bbt.num_bad_blocks);
     return ESP_OK;
 }
 
@@ -260,7 +270,7 @@ static esp_err_t alloc_blocks(struct ecu_mgr_t *m, uint32_t num_blocks, uint16_t
             count = 0;
         }
     }
-    ESP_LOGE(ECU_LOG_TAG, "No contiguous free blocks (%u required)", (unsigned) num_blocks);
+    ESP_LOGE(TAG, "No contiguous free blocks (%u required)", (unsigned) num_blocks);
     return ESP_ERR_NO_MEM;
 }
 
@@ -329,7 +339,7 @@ esp_err_t ecu_manager_init(ecu_manager_handle_t *out_handle, nand_handle_t nand)
     }
 
 #ifdef CONFIG_EALIVE_ECU_FW_MANAGER_DEBUG
-    esp_log_level_set(ECU_LOG_TAG, ESP_LOG_DEBUG);
+    esp_log_level_set(TAG, ESP_LOG_DEBUG);
 #endif
 
     struct ecu_mgr_t *m = calloc(1, sizeof(struct ecu_mgr_t));
@@ -355,13 +365,13 @@ esp_err_t ecu_manager_init(ecu_manager_handle_t *out_handle, nand_handle_t nand)
         valid = (crc == m->sb.header_crc32);
         if (!valid)
         {
-            ESP_LOGW(ECU_LOG_TAG, "Superblock CRC invalid — reformatting");
+            ESP_LOGW(TAG, "Superblock CRC invalid — reformatting");
         }
     }
 
     else
     {
-        ESP_LOGI(ECU_LOG_TAG, "Superblock not found — formatting");
+        ESP_LOGI(TAG, "Superblock not found — formatting");
     }
 
     if (!valid)
@@ -375,7 +385,7 @@ esp_err_t ecu_manager_init(ecu_manager_handle_t *out_handle, nand_handle_t nand)
 
     m->initialized = true;
     *out_handle = m;
-    ESP_LOGI(ECU_LOG_TAG, "Initialized: %" PRId16 " ECUs, %" PRId32 " bad blocks", m->sb.num_slots, m->bbt.num_bad_blocks);
+    ESP_LOGI(TAG, "Initialized: %" PRId16 " ECUs, %" PRId32 " bad blocks", m->sb.num_slots, m->bbt.num_bad_blocks);
     return ESP_OK;
 
 fail:
@@ -386,10 +396,7 @@ fail:
 
 esp_err_t ecu_manager_deinit(ecu_manager_handle_t mgr)
 {
-    if (!mgr)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
+    MGR_CHECK(mgr);
     struct ecu_mgr_t *m = mgr;
     m->initialized = false;
     vSemaphoreDelete(m->mutex);
@@ -399,13 +406,10 @@ esp_err_t ecu_manager_deinit(ecu_manager_handle_t mgr)
 
 esp_err_t ecu_manager_format(ecu_manager_handle_t mgr)
 {
-    if (!mgr)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
+    MGR_CHECK_ARG(mgr);
     struct ecu_mgr_t *m = mgr;
 
-    ESP_LOGW(ECU_LOG_TAG, "Formatting management area...");
+    ESP_LOGW(TAG, "Formatting management area...");
     memset(&m->sb, 0, sizeof(m->sb));
     memset(&m->bbt, 0, sizeof(m->bbt));
 
@@ -429,13 +433,10 @@ esp_err_t ecu_manager_format(ecu_manager_handle_t mgr)
 
 esp_err_t ecu_manager_scan_bbt(ecu_manager_handle_t mgr)
 {
-    if (!mgr)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
+    MGR_CHECK_ARG(mgr);
     struct ecu_mgr_t *m = mgr;
 
-    ESP_LOGI(ECU_LOG_TAG, "Scanning for bad blocks...");
+    ESP_LOGI(TAG, "Scanning for bad blocks...");
     memset(m->bbt.bitmap, 0, sizeof(m->bbt.bitmap));
     m->bbt.num_bad_blocks = 0;
 
@@ -452,7 +453,7 @@ esp_err_t ecu_manager_scan_bbt(ecu_manager_handle_t mgr)
     m->bbt.crc32 = ecu_crc32(m->bbt.bitmap, sizeof(m->bbt.bitmap));
     m->bbt.timestamp = (uint32_t) (esp_timer_get_time() / 1000000LL);
 
-    ESP_LOGI(ECU_LOG_TAG, "Scan complete: %" PRId32 " bad blocks", m->bbt.num_bad_blocks);
+    ESP_LOGI(TAG, "Scan complete: %" PRId32 " bad blocks", m->bbt.num_bad_blocks);
     return ESP_OK;
 }
 
@@ -486,7 +487,9 @@ static void erase_slot_blocks(nand_handle_t nand, const ecu_slot_entry_t *sl)
 esp_err_t ecu_writer_begin(ecu_manager_handle_t mgr, const char *ecu_name, const char *fw_version, uint32_t hw_id, ecu_file_type_t ftype, uint32_t total_size, ecu_writer_t *writer)
 {
     MGR_CHECK(mgr);
-    if (!ecu_name || total_size == 0 || !writer)
+    MGR_CHECK_ARG(ecu_name);
+    MGR_CHECK_ARG(writer);
+    if (total_size == 0)
     {
         return ESP_ERR_INVALID_ARG;
     }
@@ -522,7 +525,7 @@ esp_err_t ecu_writer_begin(ecu_manager_handle_t mgr, const char *ecu_name, const
     /* Erase old data if the slot already existed */
     if (slot->status == ECU_SLOT_ACTIVE)
     {
-        ESP_LOGI(ECU_LOG_TAG, "Replacing '%s' ftype=%u", ecu_name, (unsigned) ftype);
+        ESP_LOGI(TAG, "Replacing '%s' ftype=%u", ecu_name, (unsigned) ftype);
         /* Erase only the blocks belonging to the file type being replaced */
         switch (ftype)
         {
@@ -620,7 +623,7 @@ esp_err_t ecu_writer_begin(ecu_manager_handle_t mgr, const char *ecu_name, const
         ret = nand_erase_block(m->nand, b);
         if (ret != ESP_OK)
         {
-            ESP_LOGE(ECU_LOG_TAG, "Failed to erase block %u", b);
+            ESP_LOGE(TAG, "Failed to erase block %u", b);
             free(writer->_page_buf);
             writer->_page_buf = NULL;
             return ret;
@@ -645,14 +648,7 @@ esp_err_t ecu_writer_begin(ecu_manager_handle_t mgr, const char *ecu_name, const
     writer->_hw_id = hw_id;
     writer->_valid = true;
 
-    ESP_LOGI(
-        ECU_LOG_TAG,
-        "Writer aberto: '%s' ftype=%u size=%u blocos=%u..%u",
-        ecu_name,
-        (unsigned) ftype,
-        (unsigned) total_size,
-        first_blk,
-        (unsigned) (first_blk + num_blk - 1U));
+    ESP_LOGI(TAG, "Writer aberto: '%s' ftype=%u size=%u blocos=%u..%u", ecu_name, (unsigned) ftype, (unsigned) total_size, first_blk, (unsigned) (first_blk + num_blk - 1U));
 
     return ESP_OK;
 }
@@ -700,7 +696,7 @@ static esp_err_t writer_flush_page(ecu_writer_t *wr)
     esp_err_t ret = nand_program_page(m->nand, wr->_cur_block, wr->_cur_page, wr->_page_buf, NULL);
     if (ret != ESP_OK)
     {
-        ESP_LOGE(ECU_LOG_TAG, "Program page falhou blk=%u pg=%u: %s", wr->_cur_block, wr->_cur_page, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Program page falhou blk=%u pg=%u: %s", wr->_cur_block, wr->_cur_page, esp_err_to_name(ret));
         return ret;
     }
 
@@ -730,7 +726,7 @@ esp_err_t ecu_writer_write(ecu_writer_t *writer, const uint8_t *data, uint32_t l
 
     if (writer->bytes_written + len > writer->total_size)
     {
-        ESP_LOGE(ECU_LOG_TAG, "Write excede total_size (%u + %u > %u)", (unsigned) writer->bytes_written, (unsigned) len, (unsigned) writer->total_size);
+        ESP_LOGE(TAG, "Write excede total_size (%u + %u > %u)", (unsigned) writer->bytes_written, (unsigned) len, (unsigned) writer->total_size);
         return ESP_ERR_INVALID_SIZE;
     }
 
@@ -778,7 +774,7 @@ esp_err_t ecu_writer_commit(ecu_writer_t *writer)
     /* Verify that exactly total_size bytes were written */
     if (writer->bytes_written != writer->total_size)
     {
-        ESP_LOGE(ECU_LOG_TAG, "commit: written=%u != declared total=%u", (unsigned) writer->bytes_written, (unsigned) writer->total_size);
+        ESP_LOGE(TAG, "commit: written=%u != declared total=%u", (unsigned) writer->bytes_written, (unsigned) writer->total_size);
         ecu_writer_abort(writer);
         return ESP_ERR_INVALID_SIZE;
     }
@@ -834,7 +830,7 @@ esp_err_t ecu_writer_commit(ecu_writer_t *writer)
     ret = nand_program_page(m->nand, writer->_first_block, 0U, first_page_buf, NULL);
     if (ret != ESP_OK)
     {
-        ESP_LOGE(ECU_LOG_TAG, "Failed to program first page: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to program first page: %s", esp_err_to_name(ret));
         writer->_valid = false;
         return ret;
     }
@@ -893,7 +889,7 @@ esp_err_t ecu_writer_commit(ecu_writer_t *writer)
 
     if (ret == ESP_OK)
     {
-        ESP_LOGI(ECU_LOG_TAG, "Commit OK: '%s' ftype=%u size=%u crc=0x%08X", writer->_ecu_name, (unsigned) writer->_ftype, (unsigned) writer->total_size, (unsigned) final_crc);
+        ESP_LOGI(TAG, "Commit OK: '%s' ftype=%u size=%u crc=0x%08X", writer->_ecu_name, (unsigned) writer->_ftype, (unsigned) writer->total_size, (unsigned) final_crc);
     }
 
     return ret;
@@ -962,7 +958,7 @@ esp_err_t ecu_writer_abort(ecu_writer_t *writer)
     writer->_page_buf = NULL;
     writer->_valid = false;
 
-    ESP_LOGW(ECU_LOG_TAG, "Writer aborted: '%s' ftype=%u", writer->_ecu_name, (unsigned) writer->_ftype);
+    ESP_LOGW(TAG, "Writer aborted: '%s' ftype=%u", writer->_ecu_name, (unsigned) writer->_ftype);
     return ESP_OK;
 }
 
@@ -995,7 +991,7 @@ static esp_err_t reader_load_page(ecu_reader_t *rd, uint32_t logical_page)
 
     if (ecc == NAND_ECC_UNCORRECTED)
     {
-        ESP_LOGE(ECU_LOG_TAG, "Uncorrectable ECC: block=%u page=%u", blk, pg);
+        ESP_LOGE(TAG, "Uncorrectable ECC: block=%u page=%u", blk, pg);
         return ESP_ERR_INVALID_CRC;
     }
 
@@ -1008,10 +1004,8 @@ static esp_err_t reader_load_page(ecu_reader_t *rd, uint32_t logical_page)
 esp_err_t ecu_reader_open(ecu_manager_handle_t mgr, const char *ecu_name, ecu_file_type_t ftype, ecu_reader_t *reader)
 {
     MGR_CHECK(mgr);
-    if (!ecu_name || !reader)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
+    MGR_CHECK_ARG(ecu_name);
+    MGR_CHECK_ARG(reader);
 
     struct ecu_mgr_t *m = mgr;
     memset(reader, 0, sizeof(ecu_reader_t));
@@ -1081,7 +1075,7 @@ esp_err_t ecu_reader_open(ecu_manager_handle_t mgr, const char *ecu_name, ecu_fi
     const ecu_file_header_t *hdr = (const ecu_file_header_t *) reader->_page_cache;
     if (hdr->magic != ECU_FILE_MAGIC)
     {
-        ESP_LOGE(ECU_LOG_TAG, "Invalid file magic at block %u: 0x%08X", first_blk, (unsigned) hdr->magic);
+        ESP_LOGE(TAG, "Invalid file magic at block %u: 0x%08X", first_blk, (unsigned) hdr->magic);
         free(reader->_page_cache);
         reader->_page_cache = NULL;
         return ESP_ERR_NOT_FOUND;
@@ -1094,7 +1088,7 @@ esp_err_t ecu_reader_open(ecu_manager_handle_t mgr, const char *ecu_name, ecu_fi
     reader->_cache_valid = true;
     reader->_valid = true;
 
-    ESP_LOGD(ECU_LOG_TAG, "Reader opened: '%s' ftype=%u size=%u", ecu_name, (unsigned) ftype, (unsigned) file_size);
+    ESP_LOGD(TAG, "Reader opened: '%s' ftype=%u size=%u", ecu_name, (unsigned) ftype, (unsigned) file_size);
 
     return ESP_OK;
 }
@@ -1230,19 +1224,19 @@ esp_err_t ecu_reader_close(ecu_reader_t *reader)
         uint32_t final_crc = ~reader->_crc_accum;
         if (final_crc != reader->_expected_crc)
         {
-            ESP_LOGE(ECU_LOG_TAG, "CRC mismatch: computed=0x%08X expected=0x%08X", (unsigned) final_crc, (unsigned) reader->_expected_crc);
+            ESP_LOGE(TAG, "CRC mismatch: computed=0x%08X expected=0x%08X", (unsigned) final_crc, (unsigned) reader->_expected_crc);
             ret = ESP_ERR_INVALID_CRC;
         }
 
         else
         {
-            ESP_LOGD(ECU_LOG_TAG, "CRC verificado OK (0x%08X)", (unsigned) final_crc);
+            ESP_LOGD(TAG, "CRC verificado OK (0x%08X)", (unsigned) final_crc);
         }
     }
 
     else
     {
-        ESP_LOGD(ECU_LOG_TAG, "Reader closed (partial read: %u/%u bytes)", (unsigned) reader->bytes_read, (unsigned) reader->file_size);
+        ESP_LOGD(TAG, "Reader closed (partial read: %u/%u bytes)", (unsigned) reader->bytes_read, (unsigned) reader->file_size);
     }
 
     free(reader->_page_cache);
@@ -1255,10 +1249,7 @@ esp_err_t ecu_reader_close(ecu_reader_t *reader)
 esp_err_t ecu_delete_firmware(ecu_manager_handle_t mgr, const char *ecu_name)
 {
     MGR_CHECK(mgr);
-    if (!ecu_name)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
+    MGR_CHECK_ARG(ecu_name);
     struct ecu_mgr_t *m = mgr;
 
     MGR_LOCK(m);
@@ -1292,7 +1283,7 @@ esp_err_t ecu_delete_firmware(ecu_manager_handle_t mgr, const char *ecu_name)
         MGR_UNLOCK(m);
         if (ret == ESP_OK)
         {
-            ESP_LOGI(ECU_LOG_TAG, "ECU '%s' deleted", ecu_name);
+            ESP_LOGI(TAG, "ECU '%s' deleted", ecu_name);
         }
         return ret;
     }
@@ -1339,10 +1330,7 @@ static bool verify_file_crc(ecu_manager_handle_t mgr, const char *ecu_name, ecu_
 esp_err_t ecu_verify_firmware(ecu_manager_handle_t mgr, const char *ecu_name, bool *bin_ok, bool *prm_ok, bool *idx_ok)
 {
     MGR_CHECK(mgr);
-    if (!ecu_name)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
+    MGR_CHECK_ARG(ecu_name);
 
     struct ecu_mgr_t *m = mgr;
     const ecu_slot_entry_t *sl = find_active_slot(m, ecu_name);
@@ -1388,10 +1376,8 @@ static void slot_to_info(const ecu_slot_entry_t *sl, ecu_info_t *info)
 esp_err_t ecu_get_info(ecu_manager_handle_t mgr, const char *ecu_name, ecu_info_t *info)
 {
     MGR_CHECK(mgr);
-    if (!ecu_name || !info)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
+    MGR_CHECK_ARG(ecu_name);
+    MGR_CHECK_ARG(info);
 
     const ecu_slot_entry_t *sl = find_active_slot(mgr, ecu_name);
     if (!sl)
@@ -1405,7 +1391,8 @@ esp_err_t ecu_get_info(ecu_manager_handle_t mgr, const char *ecu_name, ecu_info_
 esp_err_t ecu_get_info_by_slot(ecu_manager_handle_t mgr, uint8_t slot_id, ecu_info_t *info)
 {
     MGR_CHECK(mgr);
-    if (slot_id >= ECU_MAX_SLOTS || !info)
+    MGR_CHECK_ARG(info);
+    if (slot_id >= ECU_MAX_SLOTS)
     {
         return ESP_ERR_INVALID_ARG;
     }
@@ -1423,10 +1410,8 @@ esp_err_t ecu_get_info_by_slot(ecu_manager_handle_t mgr, uint8_t slot_id, ecu_in
 esp_err_t ecu_list(ecu_manager_handle_t mgr, ecu_info_t *list, uint8_t list_size, uint8_t *count)
 {
     MGR_CHECK(mgr);
-    if (!list || !count)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
+    MGR_CHECK_ARG(list);
+    MGR_CHECK_ARG(count);
 
     struct ecu_mgr_t *m = mgr;
     uint8_t n = 0;
@@ -1444,10 +1429,8 @@ esp_err_t ecu_list(ecu_manager_handle_t mgr, ecu_info_t *list, uint8_t list_size
 esp_err_t ecu_exists(ecu_manager_handle_t mgr, const char *ecu_name, bool *exists)
 {
     MGR_CHECK(mgr);
-    if (!ecu_name || !exists)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
+    MGR_CHECK_ARG(ecu_name);
+    MGR_CHECK_ARG(exists);
     *exists = (find_active_slot(mgr, ecu_name) != NULL);
     return ESP_OK;
 }

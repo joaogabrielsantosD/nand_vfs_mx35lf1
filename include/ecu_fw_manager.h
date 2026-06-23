@@ -532,24 +532,4 @@ esp_err_t ecu_exists(ecu_manager_handle_t mgr, const char *ecu_name, bool *exist
  */
 esp_err_t ecu_get_stats(ecu_manager_handle_t mgr, uint32_t *total_blocks, uint32_t *used_blocks, uint32_t *free_blocks, uint32_t *bad_blocks);
 
-/**
- * @brief Compute the IEEE 802.3 CRC32 of a buffer.
- */
-uint32_t ecu_crc32(const uint8_t *data, size_t len);
-
-/**
- * @brief Update a running CRC32 with additional data (incremental variant).
- *
- * Initialize the accumulator with 0xFFFFFFFF, call this for each chunk,
- * then XOR the final value with 0xFFFFFFFF to obtain the CRC32.
- */
-uint32_t ecu_crc32_update(uint32_t crc, const uint8_t *data, size_t len);
-
-/**
- * @brief Calculate the number of NAND blocks required to store @p data_size bytes.
- *
- * Accounts for the file header overhead (ECU_FILE_HEADER_SIZE bytes).
- */
-uint32_t ecu_bytes_to_blocks(uint32_t data_size);
-
 #endif /* ECU_FW_MANAGER_H */

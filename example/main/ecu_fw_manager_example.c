@@ -84,10 +84,10 @@ static void print_ecu_table(ecu_manager_handle_t mgr)
     ESP_LOGI(TAG, "  Total: %u ECU(s)", (unsigned) count);
 }
 
-/* DEMO 2: Streaming Write — simulates UART/TCP reception */
+/* DEMO 1: Streaming Write — simulates UART/TCP reception */
 static esp_err_t demo_stream_write(ecu_manager_handle_t mgr)
 {
-    print_sep("DEMO 2: Streaming Write (ECU_ENGINE, 1 MB .bin)");
+    print_sep("DEMO 1: Streaming Write (ECU_ENGINE, 1 MB .bin)");
 
     const uint32_t TOTAL_SIZE = 1024U * 1024U; /* 1 MB     */
     const uint32_t CHUNK_SIZE = 4U * 1024U;    /* 4 KB por chunk */
@@ -153,10 +153,10 @@ static esp_err_t demo_stream_write(ecu_manager_handle_t mgr)
     return ret;
 }
 
-/* DEMO 3: Streaming Write with ABORT — simulates a transmission failure */
+/* DEMO 2: Streaming Write with ABORT — simulates a transmission failure */
 static esp_err_t demo_stream_abort(ecu_manager_handle_t mgr)
 {
-    print_sep("DEMO 3: Streaming Write com Abort (ECU_TEMP)");
+    print_sep("DEMO 2: Streaming Write com Abort (ECU_TEMP)");
 
     const uint32_t TOTAL = 64U * 1024U; /* 64 KB */
     const uint32_t CHUNK = 4096U;
@@ -184,10 +184,10 @@ static esp_err_t demo_stream_abort(ecu_manager_handle_t mgr)
     return exists ? ESP_FAIL : ESP_OK;
 }
 
-/* DEMO 4: Streaming Read — reads large firmware chunk by chunk */
+/* DEMO 3: Streaming Read — reads large firmware chunk by chunk */
 static esp_err_t demo_stream_read(ecu_manager_handle_t mgr)
 {
-    print_sep("DEMO 4: Streaming Read (ECU_ENGINE, 1 MB)");
+    print_sep("DEMO 3: Streaming Read (ECU_ENGINE, 1 MB)");
 
     ecu_reader_t rd;
     CHECK(ecu_reader_open(mgr, "ECU_ENGINE", ECU_FILE_BIN, &rd), "reader_open");
@@ -251,10 +251,10 @@ static esp_err_t demo_stream_read(ecu_manager_handle_t mgr)
 }
 
 #ifdef CONFIG_ECU_FW_MANAGER_SEEK_EXAMPLE
-/* DEMO 5: Seek — random access within the firmware */
+/* DEMO 4: Seek — random access within the firmware */
 static esp_err_t demo_stream_seek(ecu_manager_handle_t mgr)
 {
-    print_sep("DEMO 5: Seek (Reads the beginning and end of the firmware.)");
+    print_sep("DEMO 4: Seek (Reads the beginning and end of the firmware.)");
 
     ecu_reader_t rd;
     CHECK(ecu_reader_open(mgr, "ECU_ENGINE", ECU_FILE_BIN, &rd), "reader_open seek demo");
@@ -298,10 +298,10 @@ static esp_err_t demo_stream_seek(ecu_manager_handle_t mgr)
 }
 #endif
 
-/* DEMO 6: Streaming Write of .prm and .idx for ECU_ENGINE */
+/* DEMO 5: Streaming Write of .prm and .idx for ECU_ENGINE */
 static esp_err_t demo_stream_multifile(ecu_manager_handle_t mgr)
 {
-    print_sep("DEMO 6: Stream Write .prm e .idx (ECU_ENGINE)");
+    print_sep("DEMO 5: Stream Write .prm e .idx (ECU_ENGINE)");
 
     const uint32_t PRM_SIZE = 16U * 1024U; /* 16 KB */
     const uint32_t IDX_SIZE = 4U * 1024U;  /*  4 KB */
@@ -382,10 +382,10 @@ static esp_err_t demo_stream_multifile(ecu_manager_handle_t mgr)
     return ESP_OK;
 }
 
-/* DEMO 7: ecu_verify_firmware using streaming (constant RAM) */
+/* DEMO 6: ecu_verify_firmware using streaming (constant RAM) */
 static esp_err_t demo_verify(ecu_manager_handle_t mgr)
 {
-    print_sep("DEMO 7: Integrity Verification (streaming, ~2 KB RAM)");
+    print_sep("DEMO 6: Integrity Verification (streaming, ~2 KB RAM)");
 
     bool bin_ok, prm_ok, idx_ok;
     int64_t t0 = esp_timer_get_time();
@@ -400,10 +400,10 @@ static esp_err_t demo_verify(ecu_manager_handle_t mgr)
     return (bin_ok && prm_ok && idx_ok) ? ESP_OK : ESP_FAIL;
 }
 
-/* DEMO 8: Sub-page reads — 1 byte at a time (page-cache stress test) */
+/* DEMO 7: Sub-page reads — 1 byte at a time (page-cache stress test) */
 static esp_err_t demo_subpage_read(ecu_manager_handle_t mgr)
 {
-    print_sep("DEMO 8: Sub-page Read (1 byte at a time, first 16 bytes)");
+    print_sep("DEMO 7: Sub-page Read (1 byte at a time, first 16 bytes)");
 
     ecu_reader_t rd;
     CHECK(ecu_reader_open(mgr, "ECU_ABS", ECU_FILE_BIN, &rd), "reader_open subpage");
