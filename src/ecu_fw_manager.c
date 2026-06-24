@@ -333,10 +333,8 @@ static inline uint32_t byte_offset_to_logical_page(uint32_t byte_offset)
 
 esp_err_t ecu_manager_init(ecu_manager_handle_t *out_handle, nand_handle_t nand)
 {
-    if (!out_handle || !nand)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
+    MGR_CHECK_ARG(out_handle);
+    MGR_CHECK_ARG(nand);
 
 #ifdef CONFIG_EALIVE_ECU_FW_MANAGER_DEBUG
     esp_log_level_set(TAG, ESP_LOG_DEBUG);
