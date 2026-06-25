@@ -14,13 +14,6 @@ menu "ECU Firmware NAND MX35 Manager Configuration"
             Enable protected mode for NAND MX35 device.
 
     menu "Run example"
-        config ECU_FW_MANAGER_SEEK_EXAMPLE
-            bool "Run seek example for ECU Firmware Manager"
-            depends on RUN_ECU_FW_MANAGER_EXAMPLE
-            default n
-            help
-                Select to run seek example for ECU Firmware Manager.
-
         choice
             prompt"Run example for ecu NAND MX35 manager"
             default RUN_ECU_FW_MANAGER_EXAMPLE

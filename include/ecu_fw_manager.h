@@ -460,22 +460,6 @@ esp_err_t ecu_reader_open(ecu_manager_handle_t mgr, const char *ecu_name, ecu_fi
 esp_err_t ecu_reader_read(ecu_reader_t *reader, void *buf, size_t size, size_t count, size_t *out_count);
 
 /**
- * @brief Reposition the read cursor (analogous to fseek SEEK_SET).
- *
- * Moves the cursor to @p offset bytes from the start of the file data.
- * The page cache is preserved when the new position falls within the
- * same 2048-byte page that is already loaded.
- *
- * After a seek, ecu_reader_close() will skip the CRC validation because
- * the data was not read sequentially from byte 0.
- * To verify integrity after random access, use ecu_verify_firmware().
- *
- * @param[in] offset  Target byte offset [0 .. file_size].
- * @return ESP_ERR_INVALID_ARG if offset > file_size.
- */
-esp_err_t ecu_reader_seek(ecu_reader_t *reader, uint32_t offset);
-
-/**
  * @brief Close the reader and validate the CRC32 if fully read.
  *
  * CRC validation is performed only when bytes_read == file_size AND
@@ -518,6 +502,19 @@ esp_err_t ecu_get_info_by_slot(ecu_manager_handle_t mgr, uint8_t slot_id, ecu_in
  * @param[out] count      Number of entries written.
  */
 esp_err_t ecu_list(ecu_manager_handle_t mgr, ecu_info_t *list, uint8_t list_size, uint8_t *count);
+
+/**
+ * @brief Get the number of active ECU slots.
+ *
+ * @param[in]  mgr    ECU manager handle.
+ * @param[out] count  Number of active slots.
+ *
+ * @return
+ *      - ESP_OK on success
+ *      - ESP_ERR_INVALID_STATE if the manager is not initialized
+ *      - ESP_ERR_INVALID_ARG if count is NULL
+ */
+esp_err_t ecu_get_active_slot_count(ecu_manager_handle_t mgr, uint8_t *count);
 
 /** @brief Check whether an ECU with the given name exists. */
 esp_err_t ecu_exists(ecu_manager_handle_t mgr, const char *ecu_name, bool *exists);

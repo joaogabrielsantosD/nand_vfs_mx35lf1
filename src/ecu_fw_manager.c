@@ -593,7 +593,7 @@ esp_err_t ecu_writer_begin(ecu_manager_handle_t mgr, const char *ecu_name, const
         return ret;
     }
 
-    /* Atualiza slot com os blocos reais */
+    /* Updates the slot with the actual blocks. */
     switch (ftype)
     {
         case ECU_FILE_BIN:
@@ -724,7 +724,7 @@ esp_err_t ecu_writer_write(ecu_writer_t *writer, const uint8_t *data, uint32_t l
 
     if (writer->bytes_written + len > writer->total_size)
     {
-        ESP_LOGE(TAG, "Write excede total_size (%u + %u > %u)", (unsigned) writer->bytes_written, (unsigned) len, (unsigned) writer->total_size);
+        ESP_LOGE(TAG, "Write exceeds total_size (%u + %u > %u)", (unsigned) writer->bytes_written, (unsigned) len, (unsigned) writer->total_size);
         return ESP_ERR_INVALID_SIZE;
     }
 
@@ -747,7 +747,7 @@ esp_err_t ecu_writer_write(ecu_writer_t *writer, const uint8_t *data, uint32_t l
         src += chunk;
         remaining -= chunk;
 
-        /* Se o buffer ficou cheio, faz flush para a NAND */
+        /* If the buffer fills up, it flushes to NAND. */
         if (writer->_page_fill >= NAND_PAGE_SIZE)
         {
             esp_err_t ret = writer_flush_page(writer);
@@ -1111,7 +1111,7 @@ esp_err_t ecu_reader_read(ecu_reader_t *reader, void *buf, size_t size, size_t c
     uint32_t want_bytes = (uint32_t) (size * count);
     uint32_t available = reader->file_size - reader->bytes_read;
 
-    /* Limita ao que ainda há para ler */
+    /* Limit it to what is left to read. */
     if (want_bytes > available)
     {
         want_bytes = available;
@@ -1153,7 +1153,7 @@ esp_err_t ecu_reader_read(ecu_reader_t *reader, void *buf, size_t size, size_t c
 
         memcpy(dst + done, reader->_page_cache + pg_offset, to_copy);
 
-        /* Acumula CRC sobre os bytes de dados retornados */
+        /* Accumulates CRC on the returned data bytes. */
         reader->_crc_accum = ecu_crc32_update(reader->_crc_accum, dst + done, to_copy);
         done += to_copy;
     }
@@ -1164,44 +1164,6 @@ esp_err_t ecu_reader_read(ecu_reader_t *reader, void *buf, size_t size, size_t c
     if (out_count)
     {
         *out_count = done / size;
-    }
-
-    return ESP_OK;
-}
-
-esp_err_t ecu_reader_seek(ecu_reader_t *reader, uint32_t offset)
-{
-    if (!reader || !reader->_valid)
-    {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    if (offset > reader->file_size)
-    {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    /*
-     * Reposiciona o cursor. O cache pode continuar válido se o seek
-     * Stay within the same page (cache-optimization — no NAND re-read needed).
-     * The CRC accumulator is reset because data is no longer read sequentially;
-     * ecu_reader_close() will skip CRC validation after any seek.
-     */
-    reader->bytes_read = offset;
-    reader->_crc_accum = 0xFFFFFFFFUL; /* CRC inválido após seek */
-
-    /* Invalidate cache only if the seek lands on a different page */
-    uint32_t new_abs = ECU_FILE_HEADER_SIZE + offset;
-    if (reader->_cache_valid)
-    {
-        uint32_t logical_pg = new_abs / NAND_PAGE_SIZE;
-        uint16_t blk;
-        uint8_t pg;
-        logical_page_to_physical(logical_pg, reader->_first_block, &blk, &pg);
-        if (blk != reader->_cache_block || pg != reader->_cache_page)
-        {
-            reader->_cache_valid = false;
-        }
     }
 
     return ESP_OK;
@@ -1228,7 +1190,7 @@ esp_err_t ecu_reader_close(ecu_reader_t *reader)
 
         else
         {
-            ESP_LOGD(TAG, "CRC verificado OK (0x%08X)", (unsigned) final_crc);
+            ESP_LOGD(TAG, "CRC verification OK (0x%08X)", (unsigned) final_crc);
         }
     }
 
@@ -1321,7 +1283,7 @@ static bool verify_file_crc(ecu_manager_handle_t mgr, const char *ecu_name, ecu_
     }
     free(chunk);
 
-    /* ecu_reader_close verifica o CRC */
+    /* ecu_reader_close checks CRC */
     return (ecu_reader_close(&rd) == ESP_OK);
 }
 
@@ -1419,6 +1381,21 @@ esp_err_t ecu_list(ecu_manager_handle_t mgr, ecu_info_t *list, uint8_t list_size
         {
             slot_to_info(&m->sb.slots[s], &list[n++]);
         }
+    }
+    *count = n;
+    return ESP_OK;
+}
+
+esp_err_t ecu_get_active_slot_count(ecu_manager_handle_t mgr, uint8_t *count)
+{
+    MGR_CHECK(mgr);
+    MGR_CHECK_ARG(count);
+
+    struct ecu_mgr_t *m = mgr;
+    uint8_t n = 0;
+    for (size_t s = 0; s < ECU_MAX_SLOTS; s++)
+    {
+        m->sb.slots[s].status == ECU_SLOT_ACTIVE ? n++ : 0;
     }
     *count = n;
     return ESP_OK;

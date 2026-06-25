@@ -250,58 +250,10 @@ static esp_err_t demo_stream_read(ecu_manager_handle_t mgr)
     return ret;
 }
 
-#ifdef CONFIG_ECU_FW_MANAGER_SEEK_EXAMPLE
-/* DEMO 4: Seek — random access within the firmware */
-static esp_err_t demo_stream_seek(ecu_manager_handle_t mgr)
-{
-    print_sep("DEMO 4: Seek (Reads the beginning and end of the firmware.)");
-
-    ecu_reader_t rd;
-    CHECK(ecu_reader_open(mgr, "ECU_ENGINE", ECU_FILE_BIN, &rd), "reader_open seek demo");
-
-    uint8_t header_bytes[8];
-    size_t got = 0;
-
-    /* Read the first 8 bytes of the firmware (offset 0) */
-    CHECK(ecu_reader_read(&rd, header_bytes, 1, sizeof(header_bytes), &got), "read header");
-    ESP_LOGI(
-        TAG,
-        "  Bytes 0-7: %02X %02X %02X %02X %02X %02X %02X %02X",
-        header_bytes[0],
-        header_bytes[1],
-        header_bytes[2],
-        header_bytes[3],
-        header_bytes[4],
-        header_bytes[5],
-        header_bytes[6],
-        header_bytes[7]);
-
-    /* Seek to the last 16 bytes (simulated symbol table) */
-    uint32_t tail_offset = rd.file_size >= 16U ? rd.file_size - 16U : 0U;
-    CHECK(ecu_reader_seek(&rd, tail_offset), "seek to tail");
-
-    uint8_t tail_bytes[16];
-    CHECK(ecu_reader_read(&rd, tail_bytes, 1, sizeof(tail_bytes), &got), "read tail");
-    ESP_LOGI(TAG, "  Final Bytes (offset %" PRIu32 "): %02X %02X ... %02X %02X", tail_offset, tail_bytes[0], tail_bytes[1], tail_bytes[14], tail_bytes[15]);
-
-    /* Seek to the middle and read 4 bytes */
-    uint32_t mid = rd.file_size / 2U;
-    CHECK(ecu_reader_seek(&rd, mid), "seek to middle");
-    uint8_t mid_bytes[4];
-    CHECK(ecu_reader_read(&rd, mid_bytes, 1, sizeof(mid_bytes), &got), "read middle");
-    ESP_LOGI(TAG, "  Bytes in the middle (offset %" PRIu32 "): %02X %02X %02X %02X", mid, mid_bytes[0], mid_bytes[1], mid_bytes[2], mid_bytes[3]);
-
-    /* After seek, CRC is not verified on close (by design) */
-    ecu_reader_close(&rd);
-    ESP_LOGI(TAG, "  Seek demo completed");
-    return ESP_OK;
-}
-#endif
-
-/* DEMO 5: Streaming Write of .prm and .idx for ECU_ENGINE */
+/* DEMO 4: Streaming Write of .prm and .idx for ECU_ENGINE */
 static esp_err_t demo_stream_multifile(ecu_manager_handle_t mgr)
 {
-    print_sep("DEMO 5: Stream Write .prm e .idx (ECU_ENGINE)");
+    print_sep("DEMO 4: Stream Write .prm e .idx (ECU_ENGINE)");
 
     const uint32_t PRM_SIZE = 16U * 1024U; /* 16 KB */
     const uint32_t IDX_SIZE = 4U * 1024U;  /*  4 KB */
@@ -382,10 +334,10 @@ static esp_err_t demo_stream_multifile(ecu_manager_handle_t mgr)
     return ESP_OK;
 }
 
-/* DEMO 6: ecu_verify_firmware using streaming (constant RAM) */
+/* DEMO 5: ecu_verify_firmware using streaming (constant RAM) */
 static esp_err_t demo_verify(ecu_manager_handle_t mgr)
 {
-    print_sep("DEMO 6: Integrity Verification (streaming, ~2 KB RAM)");
+    print_sep("DEMO 5: Integrity Verification (streaming, ~2 KB RAM)");
 
     bool bin_ok, prm_ok, idx_ok;
     int64_t t0 = esp_timer_get_time();
@@ -400,10 +352,10 @@ static esp_err_t demo_verify(ecu_manager_handle_t mgr)
     return (bin_ok && prm_ok && idx_ok) ? ESP_OK : ESP_FAIL;
 }
 
-/* DEMO 7: Sub-page reads — 1 byte at a time (page-cache stress test) */
+/* DEMO 6: Sub-page reads — 1 byte at a time (page-cache stress test) */
 static esp_err_t demo_subpage_read(ecu_manager_handle_t mgr)
 {
-    print_sep("DEMO 7: Sub-page Read (1 byte at a time, first 16 bytes)");
+    print_sep("DEMO 6: Sub-page Read (1 byte at a time, first 16 bytes)");
 
     ecu_reader_t rd;
     CHECK(ecu_reader_open(mgr, "ECU_ABS", ECU_FILE_BIN, &rd), "reader_open subpage");
