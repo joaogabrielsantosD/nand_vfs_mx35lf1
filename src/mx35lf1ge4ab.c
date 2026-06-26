@@ -630,8 +630,8 @@ esp_err_t nand_set_protection(nand_handle_t h, uint8_t val)
 esp_err_t nand_read_page(nand_handle_t h, uint16_t block, uint8_t page, uint8_t *data, uint8_t *spare, nand_ecc_status_t *ecc_stat)
 {
     NAND_CHECK(h);
-    NAND_CHECK_ARG(data);
-    NAND_CHECK_ARG(spare);
+    // NAND_CHECK_ARG(data);
+    // NAND_CHECK_ARG(spare);
 
     if (block >= NAND_BLOCKS_TOTAL)
     {
@@ -841,7 +841,6 @@ esp_err_t nand_program_page(nand_handle_t h, uint16_t block, uint8_t page, const
     build_row_addr(block, page, ra);
     build_col_addr(0x0000U, NAND_WRAP_2112, ca);
 
-    NAND_LOCK(dev);
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
     ret = nand_unprotect_all(dev);
@@ -851,6 +850,8 @@ esp_err_t nand_program_page(nand_handle_t h, uint16_t block, uint8_t page, const
         return ret;
     }
 #endif
+
+    NAND_LOCK(dev);
 
     /*
      * Step 1 — WRITE ENABLE (06h), datasheet Figure 4.
@@ -926,13 +927,13 @@ esp_err_t nand_program_page(nand_handle_t h, uint16_t block, uint8_t page, const
     }
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    NAND_LOCK(dev);
     ret = nand_protect_all(dev);
     if (ret != ESP_OK)
     {
         ESP_LOGW(TAG, "Failed to protect the blocks");
     }
 
+    NAND_LOCK(dev);
     ret = nand_write_disable_locked(dev);
     if (ret != ESP_OK)
     {
@@ -959,8 +960,6 @@ esp_err_t nand_erase_block(nand_handle_t h, uint16_t block)
 
     build_row_addr(block, 0U, ra);
 
-    NAND_LOCK(dev);
-
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
     ret = nand_unprotect_all(dev);
     if (ret != ESP_OK)
@@ -969,6 +968,8 @@ esp_err_t nand_erase_block(nand_handle_t h, uint16_t block)
         return ret;
     }
 #endif
+
+    NAND_LOCK(dev);
 
     /* WRITE ENABLE */
     ret = nand_write_enable_locked(dev);
@@ -1006,13 +1007,13 @@ esp_err_t nand_erase_block(nand_handle_t h, uint16_t block)
     }
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    NAND_LOCK(dev);
     ret = nand_protect_all(dev);
     if (ret != ESP_OK)
     {
         ESP_LOGW(TAG, "Failed to protect the blocks");
     }
 
+    NAND_LOCK(dev);
     ret = nand_write_disable_locked(dev);
     if (ret != ESP_OK)
     {
@@ -1080,8 +1081,6 @@ esp_err_t nand_mark_bad_block(nand_handle_t h, uint16_t block)
     build_row_addr(block, 0U, ra);
     build_col_addr(NAND_PAGE_SIZE, 0U, ca);
 
-    NAND_LOCK(dev);
-
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
     ret = nand_unprotect_all(dev);
     if (ret != ESP_OK)
@@ -1090,6 +1089,8 @@ esp_err_t nand_mark_bad_block(nand_handle_t h, uint16_t block)
         return ret;
     }
 #endif
+
+    NAND_LOCK(dev);
 
     ret = nand_write_enable_locked(dev);
     if (ret != ESP_OK)
@@ -1135,13 +1136,13 @@ esp_err_t nand_mark_bad_block(nand_handle_t h, uint16_t block)
     }
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    NAND_LOCK(dev);
     ret = nand_protect_all(dev);
     if (ret != ESP_OK)
     {
         ESP_LOGW(TAG, "Failed to protect the blocks");
     }
 
+    NAND_LOCK(dev);
     ret = nand_write_disable_locked(dev);
     if (ret != ESP_OK)
     {
