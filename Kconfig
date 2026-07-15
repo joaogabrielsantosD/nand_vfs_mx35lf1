@@ -1,18 +1,5 @@
 menu "ECU Firmware NAND MX35 Manager Configuration"
-
-    config MAX_ECU_SLOTS
-        int "Max ECU slots"
-        range 1 32
-        default 10
-        help
-            Maximum number of ECU slots to manage. Each slot can hold one firmware image.
-
-    config NAND_MX35_PROTECTED_MODE
-        bool "Enable protected mode for NAND MX35"
-        default n
-        help
-            Enable protected mode for NAND MX35 device.
-
+    
     menu "Run example"
         choice
             prompt"Run example for ecu NAND MX35 manager"

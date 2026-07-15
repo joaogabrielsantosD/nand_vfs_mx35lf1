@@ -1,4 +1,3 @@
-
 #ifndef ECU_FW_MANAGER_H
 #define ECU_FW_MANAGER_H
 
@@ -8,16 +7,16 @@
  * ─────────────────────────────────────────────────────────────
  *
  *  ┌──────────────────────────────────────────────────────────┐
- *  │ Block 0   (RESERVED — guaranteed good by the vendor)     │
- *  │   Pages 0–1 : Superblock (master ECU table)              │
- *  │   Page  2   : Bad Block Table (BBT)                      │
- *  │   Page  3   : BBT backup                                 │
+ *  │ Block 0 : Reserved                                       │
  *  ├──────────────────────────────────────────────────────────┤
- *  │ Blocks 1–15  (RESERVED for future expansion)             │
+ *  │ Block 1   (RESERVED — guaranteed good by the vendor)     │
+ *  │   Page 0  : Superblock (master ECU table)                │
+ *  │   Page 1  : Bad Block Table (BBT)                        │
+ *  │   Page 3  : BBT backup                                   │
  *  ├──────────────────────────────────────────────────────────┤
- *  │ Blocks 16–1023  (DATA — ECU firmware storage)            │
+ *  │ Blocks 2–1023   (DATA — ECU firmware storage)            │
  *  └──────────────────────────────────────────────────────────┘
- *
+ * 
  *  File layout within allocated blocks:
  *    Block N, Page 0 : [ecu_file_header_t 72 B][data: up to 1976 B]
  *    Block N, Pages 1–63 : [data: 2048 B each]
@@ -26,65 +25,53 @@
 
 #include "esp_err.h"
 #include "mx35lf1ge4ab.h"
-#include "sdkconfig.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#define ECU_NAME_MAX_LEN    32U                  /**< Max ECU name length (incl. NUL)    */
-#define ECU_VERSION_MAX_LEN 16U                  /**< Max firmware version string length  */
-#define ECU_MAX_SLOTS       CONFIG_MAX_ECU_SLOTS /**< Max simultaneous ECUs stored        */
-#define ECU_MAX_FILENAME    48U                  /**< Max file name length (incl. NUL)    */
+#define ECU_NAME_MAX_LEN    32U /**< Max ECU name length (incl. NUL)     */
+#define ECU_VERSION_MAX_LEN 16U /**< Max firmware version string length  */
+#define ECU_MAX_FILENAME    48U /**< Max file name length (incl. NUL)    */
+#define ECU_MAX_SLOTS       10U
 
 /** Block ranges */
-#define ECU_RESERVED_BLOCK_START 0U
-#define ECU_RESERVED_BLOCK_END   15U
-#define ECU_DATA_BLOCK_START     16U
+#define ECU_RESERVED_BLOCK_START 1U
+#define ECU_DATA_BLOCK_START     2U
 #define ECU_DATA_BLOCK_END       (NAND_BLOCKS_TOTAL - 1U)
 
 /** Special pages within Block 0 */
-#define ECU_SUPERBLOCK_PAGE_A 0U /**< Superblock — first half             */
-#define ECU_SUPERBLOCK_PAGE_B 1U /**< Superblock — second half            */
-#define ECU_BBT_PAGE          2U /**< Bad Block Table                     */
-#define ECU_BBT_BAK_PAGE      3U /**< BBT backup                          */
+#define ECU_SUPERBLOCK_PAGE 0U /**< Superblock      */
+#define ECU_BBT_PAGE        2U /**< Bad Block Table */
+#define ECU_BBT_BAK_PAGE    4U /**< BBT backup      */
 
 /** Magic numbers for structure validation */
-#define ECU_SUPERBLOCK_MAGIC 0x4E414E44UL /**< "NAND"                    */
-#define ECU_SLOT_MAGIC       0x45435546UL /**< "ECUF"                    */
-#define ECU_FILE_MAGIC       0x46574C44UL /**< "FWLD"                    */
+#define ECU_SUPERBLOCK_MAGIC 0x4E414E44UL /**< "NAND"              */
+#define ECU_SLOT_MAGIC       0x45435546UL /**< "ECUF"              */
+#define ECU_FILE_MAGIC       0x46574C44UL /**< "FWLD"              */
 #define ECU_BBT_MAGIC        0xBBBBBBBBUL
-#define ECU_FORMAT_VERSION   0x0101U /**< Format version 1.1        */
-
+#define ECU_FORMAT_VERSION   0x0102U /**< Format version 1.2 */
 
 /** File type identifier stored in ecu_file_header_t. */
 typedef enum
 {
-    ECU_FILE_BIN = 0x01U, /**< Binary firmware image (.bin)               */
-    ECU_FILE_PRM = 0x02U, /**< Parameter file (.prm)                       */
-    ECU_FILE_IDX = 0x03U, /**< Index / map file (.idx)                     */
+    ECU_FILE_BIN = 0x01U, /**< Binary firmware image (.bin) */
+    ECU_FILE_PRM = 0x02U, /**< Parameter file (.prm)        */
+    ECU_FILE_IDX = 0x03U, /**< Index / map file (.idx)      */
 } ecu_file_type_t;
 
 /** Lifecycle state of a firmware slot. */
 typedef enum
 {
-    ECU_SLOT_EMPTY = 0x00U,    /**< Available for use                       */
-    ECU_SLOT_ACTIVE = 0x01U,   /**< Contains valid, committed firmware      */
-    ECU_SLOT_UPDATING = 0x02U, /**< Write operation in progress             */
-    ECU_SLOT_INVALID = 0xFFU,  /**< Corrupted or failed write               */
+    ECU_SLOT_EMPTY = 0x00U,    /**< Available for use                  */
+    ECU_SLOT_ACTIVE = 0x01U,   /**< Contains valid, committed firmware */
+    ECU_SLOT_UPDATING = 0x02U, /**< Write operation in progress        */
+    ECU_SLOT_INVALID = 0xFFU,  /**< Corrupted or failed write          */
 } ecu_slot_status_t;
 
-/**
- * @brief Per-file header — exactly 72 bytes.
- *
- * Written at the start of Page 0 of the first block allocated to a file.
- * File data begins immediately after this header in the same page
- * (bytes 72 – 2047), then continues in subsequent pages.
- */
-typedef struct __attribute__((packed))
+typedef struct
 {
-    uint32_t magic;    /**< Must equal ECU_FILE_MAGIC       */
-    uint8_t file_type; /**< ecu_file_type_t value           */
-    uint8_t _rsvd[3];
+    uint32_t magic;                  /**< Must equal ECU_FILE_MAGIC       */
+    uint8_t file_type;               /**< ecu_file_type_t value           */
     char filename[ECU_MAX_FILENAME]; /**< Original file name (e.g. "ECU_ENGINE.bin") */
     uint32_t file_size;              /**< Total data bytes (not including this header) */
     uint32_t crc32;                  /**< IEEE 802.3 CRC32 of all data bytes */
@@ -92,69 +79,45 @@ typedef struct __attribute__((packed))
     uint16_t first_block;            /**< First NAND block allocated      */
     uint16_t num_blocks;             /**< Number of NAND blocks allocated */
     uint16_t format_version;         /**< ECU_FORMAT_VERSION              */
-    uint8_t _pad[2];
-} ecu_file_header_t; /* 72 bytes */
+} ecu_file_header_t;
 
 /** Bytes available for data in the first page, after the header. */
 #define ECU_FILE_HEADER_SIZE      ((uint32_t) sizeof(ecu_file_header_t))
 #define ECU_FIRST_PAGE_DATA_SPACE (NAND_PAGE_SIZE - ECU_FILE_HEADER_SIZE)
 
-/**
- * @brief Slot entry in the superblock — exactly 128 bytes.
- *
- * Describes one ECU and the location of each of its three files on NAND.
- */
-typedef struct __attribute__((packed))
+typedef struct
 {
-    uint32_t magic;  /**< Must equal ECU_SLOT_MAGIC   */
-    uint8_t status;  /**< ecu_slot_status_t           */
-    uint8_t slot_id; /**< Index in the slot table [0–31] */
-    uint8_t _rsvd[2];
-    char ecu_name[ECU_NAME_MAX_LEN];      /**< Unique ECU identifier       */
-    char fw_version[ECU_VERSION_MAX_LEN]; /**< Firmware version string     */
-    uint32_t hw_id;                       /**< Hardware revision ID        */
-    uint32_t timestamp_created;           /**< Unix time of first write     */
-    uint32_t timestamp_updated;           /**< Unix time of last write      */
+    uint16_t first_block; /**< First NAND block allocated      */
+    uint16_t num_blocks;  /**< Number of NAND blocks allocated */
+    uint32_t size;
+    uint32_t crc32;
+} ecu_file_slot_t;
 
-    /* .bin file location and metadata */
-    uint16_t bin_first_block;
-    uint16_t bin_num_blocks;
-    uint32_t bin_size;
-    uint32_t bin_crc32;
+#define ECU_FILE_COUNT 3U /**< BIN, PRM, IDX */
 
-    /* .prm file location and metadata */
-    uint16_t prm_first_block;
-    uint16_t prm_num_blocks;
-    uint32_t prm_size;
-    uint32_t prm_crc32;
-
-    /* .idx file location and metadata */
-    uint16_t idx_first_block;
-    uint16_t idx_num_blocks;
-    uint32_t idx_size;
-    uint32_t idx_crc32;
-
-    uint32_t _pad[4];
-} ecu_slot_entry_t; /* 128 bytes */
-
-/**
- * @brief Master superblock — occupies pages 0 and 1 of Block 0.
- *
- * sizeof(ecu_superblock_t) > NAND_PAGE_SIZE, so the structure is
- * split across two pages: the first NAND_PAGE_SIZE bytes go to page A,
- * the remainder to page B.
- */
-typedef struct __attribute__((packed))
+typedef struct
 {
-    uint32_t magic;            /**< ECU_SUPERBLOCK_MAGIC                   */
-    uint16_t format_version;   /**< ECU_FORMAT_VERSION                     */
-    uint16_t num_slots;        /**< Number of active slots                 */
+    uint32_t magic;                        /**< Must equal ECU_SLOT_MAGIC   */
+    uint8_t status;                        /**< ecu_slot_status_t           */
+    uint8_t slot_id;                       /**< Index in the slot table     */
+    char ecu_name[ECU_NAME_MAX_LEN];       /**< Unique ECU identifier       */
+    char fw_version[ECU_VERSION_MAX_LEN];  /**< Firmware version string     */
+    uint32_t hw_id;                        /**< Hardware revision ID        */
+    uint32_t timestamp_created;            /**< Unix time of first write    */
+    uint32_t timestamp_updated;            /**< Unix time of last write     */
+    ecu_file_slot_t files[ECU_FILE_COUNT]; /**< index: ftype - 1            */
+} ecu_slot_entry_t;
+
+typedef struct
+{
+    uint32_t magic;            /**< ECU_SUPERBLOCK_MAGIC                    */
+    uint16_t format_version;   /**< ECU_FORMAT_VERSION                      */
+    uint16_t num_slots;        /**< Number of active slots                  */
     uint32_t data_block_start; /**< First data block (ECU_DATA_BLOCK_START) */
     uint32_t data_block_end;   /**< Last data block  (ECU_DATA_BLOCK_END)   */
-    uint32_t timestamp;        /**< Last modification timestamp            */
-    uint32_t header_crc32;     /**< CRC32 of this header (all bytes before this field) */
-    uint8_t _pad[8];
-    ecu_slot_entry_t slots[ECU_MAX_SLOTS]; /**< Slot table (32 × 128 = 4096 B) */
+    uint32_t timestamp;        /**< Last modification timestamp */
+    uint32_t header_crc32;
+    ecu_slot_entry_t slots[ECU_MAX_SLOTS]; /**< Slot table */
 } ecu_superblock_t;
 
 /**
@@ -165,18 +128,16 @@ typedef struct __attribute__((packed))
  */
 #define ECU_BBT_BYTES (NAND_BLOCKS_TOTAL / 8U)
 
-typedef struct __attribute__((packed))
+typedef struct
 {
-    uint32_t magic;                /**< ECU_BBT_MAGIC                            */
-    uint32_t crc32;                /**< CRC32 of bitmap[]                        */
-    uint32_t timestamp;            /**< Last scan / update time                  */
-    uint32_t num_bad_blocks;       /**< Number of bits set in bitmap             */
-    uint8_t bitmap[ECU_BBT_BYTES]; /**< Bit N = 1 -> block N is bad         */
+    uint32_t magic;                /**< ECU_BBT_MAGIC                       */
+    uint32_t crc32;                /**< CRC32 of bitmap[]                   */
+    uint32_t num_bad_blocks;       /**< Number of bits set in bitmap        */
+    uint32_t timestamp;            /**< Last scan / update time             */
+    uint8_t bitmap[ECU_BBT_BYTES]; /**< Bit N = 1 -> block N is bad          */
 } ecu_bbt_t;
 
-
 typedef struct ecu_mgr_t *ecu_manager_handle_t;
-
 
 /** Summary information about one stored ECU (used for listings). */
 typedef struct
@@ -194,7 +155,6 @@ typedef struct
     bool has_prm;
     bool has_idx;
 } ecu_info_t;
-
 
 /* ============================================================
  *  STREAMING WRITE CONTEXT  (ecu_writer_t)
@@ -215,18 +175,11 @@ typedef struct
  *    // After commit() or abort(), the context is invalid.
  * ============================================================ */
 
-/**
- * @brief Streaming write context.
- *
- * May be allocated on the stack or in the heap by the caller.
- * Do NOT share between FreeRTOS tasks without external synchronization.
- * The context becomes invalid after ecu_writer_commit() or ecu_writer_abort().
- */
 typedef struct
 {
     /* Public read-only fields */
-    uint32_t total_size;    /**< Exact byte count declared in begin()       */
-    uint32_t bytes_written; /**< Data bytes written so far                  */
+    uint32_t total_size;    /**< Exact byte count declared in begin() */
+    uint32_t bytes_written; /**< Data bytes written so far            */
 
     /* Internal fields — do not access directly */
     ecu_manager_handle_t _mgr;
@@ -236,12 +189,12 @@ typedef struct
     char _fw_version[ECU_VERSION_MAX_LEN];
     uint32_t _hw_id;
 
-    uint16_t _first_block; /**< First NAND block allocated                  */
-    uint16_t _num_blocks;  /**< Total NAND blocks allocated                 */
-    uint16_t _cur_block;   /**< Current block being written                 */
-    uint8_t _cur_page;     /**< Current page within the current block       */
+    uint16_t _first_block; /**< First NAND block allocated            */
+    uint16_t _num_blocks;  /**< Total NAND blocks allocated           */
+    uint16_t _cur_block;   /**< Current block being written           */
+    uint8_t _cur_page;     /**< Current page within the current block */
 
-    uint32_t _crc_accum; /**< Running CRC32 accumulator (IEEE 802.3)      */
+    uint32_t _crc_accum; /**< Running CRC32 accumulator (IEEE 802.3) */
 
     /**
      * Internal page buffer — DMA-capable, NAND_PAGE_SIZE × 2 bytes.
@@ -254,11 +207,10 @@ typedef struct
      *     (including the final CRC32) is prepended and the page is written last.
      */
     uint8_t *_page_buf;
-    uint16_t _page_fill; /**< Valid bytes currently in _page_buf          */
-    bool _first_page;    /**< True until the first page has been flushed  */
-    bool _valid;         /**< False after commit() or abort()             */
+    uint16_t _page_fill; /**< Valid bytes currently in _page_buf */
+    bool _first_page;    /**< True until the first page has been flushed */
+    bool _valid;         /**< False after commit() or abort() */
 } ecu_writer_t;
-
 
 /* ============================================================
  *  STREAMING READ CONTEXT  (ecu_reader_t)
@@ -267,8 +219,6 @@ typedef struct
  *
  *    ecu_reader_t rd;
  *    esp_err_t err = ecu_reader_open(mgr, "ECU_ENGINE", ECU_FILE_BIN, &rd);
- *    if (err != ESP_OK) { handle_error(); }
- *
  *    uint8_t buf[4096];
  *    size_t  got = 0;
  *    while (true) {
@@ -276,47 +226,28 @@ typedef struct
  *        if (err != ESP_OK || got == 0) break;
  *        process(buf, got);
  *    }
- *
- *    err = ecu_reader_close(&rd);   // validates CRC if fully read
- *    // After close(), the context is invalid.
+ *    err = ecu_reader_close(&rd);
  * ============================================================ */
 
-/**
- * @brief Streaming read context.
- *
- * Stateless with respect to NAND hardware: multiple reader contexts may
- * exist simultaneously for the same file without interference.
- * May be allocated on the stack or in the heap.
- * Always call ecu_reader_close() when done, even on error paths.
- */
 typedef struct
 {
     /* Public read-only fields */
-    uint32_t file_size;  /**< Total data bytes in the file                  */
-    uint32_t bytes_read; /**< Data bytes returned to the caller so far      */
+    uint32_t file_size;  /**< Total data bytes in the file             */
+    uint32_t bytes_read; /**< Data bytes returned to the caller so far */
 
     /* Internal fields — do not access directly */
     ecu_manager_handle_t _mgr;
-    uint16_t _first_block;  /**< Block containing the file header            */
-    uint32_t _expected_crc; /**< CRC32 stored in the file header             */
-    uint32_t _crc_accum;    /**< Running CRC32 over bytes returned so far    */
+    uint16_t _first_block;
+    uint32_t _expected_crc;
+    uint32_t _crc_accum;
 
-    /**
-     * Single-page cache — DMA-capable, NAND_PAGE_SIZE bytes.
-     * Allocated in ecu_reader_open(), freed in ecu_reader_close().
-     *
-     * Avoids re-reading a NAND page when the caller requests data
-     * smaller than one page (e.g. reading 1 byte at a time is free
-     * as long as the same page stays in cache).
-     */
-    uint8_t *_page_cache;
-    uint16_t _cache_block; /**< Block index of the cached page               */
-    uint8_t _cache_page;   /**< Page index of the cached page                */
-    bool _cache_valid;     /**< True when _page_cache contains fresh data    */
+    uint8_t *_page_cache; /**< Single-page cache — DMA-capable, NAND_PAGE_SIZE bytes */
+    uint16_t _cache_block;
+    uint8_t _cache_page;
+    bool _cache_valid;
 
-    bool _valid; /**< False after ecu_reader_close()               */
+    bool _valid; /**< False after ecu_reader_close() */
 } ecu_reader_t;
-
 
 /**
  * @brief Initialize the ECU firmware manager.

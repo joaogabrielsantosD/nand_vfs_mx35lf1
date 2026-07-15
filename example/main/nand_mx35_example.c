@@ -84,6 +84,7 @@ static esp_err_t example_init(nand_handle_t *out)
         .pin_hold = NAND_PIN_HOLD,
         .clock_speed_hz = NAND_CLOCK_HZ,
         .dma_chan = SPI_DMA_CH_AUTO,
+        .disable_ecc = true,
     };
 
     CHECK(nand_init(out, &cfg), "nand_init");
@@ -145,6 +146,7 @@ static esp_err_t example_read_program_erase(nand_handle_t h)
     /* --- Step 2: Verify the block is all-0xFF after erase --------------- */
     nand_ecc_status_t ecc;
     ret = nand_read_page(h, TEST_BLOCK, TEST_PAGE, read_buf, spare_buf, &ecc);
+    // ESP_LOG_BUFFER_HEX_LEVEL(TAG, read_buf, NAND_PAGE_SIZE, ESP_LOG_DEBUG);
     if (ret == ESP_OK)
     {
         bool all_ff = true;
@@ -192,6 +194,9 @@ static esp_err_t example_read_program_erase(nand_handle_t h)
     t0 = esp_timer_get_time();
     ret = nand_read_page(h, TEST_BLOCK, TEST_PAGE, read_buf, spare_buf, &ecc);
     int64_t read_us = esp_timer_get_time() - t0;
+
+    // ESP_LOG_BUFFER_HEX_LEVEL(TAG, write_buf, NAND_PAGE_SIZE, ESP_LOG_DEBUG);
+    // ESP_LOG_BUFFER_HEX_LEVEL(TAG, read_buf, NAND_PAGE_SIZE, ESP_LOG_DEBUG);
 
     if (ret != ESP_OK && ret != ESP_ERR_INVALID_CRC)
     {

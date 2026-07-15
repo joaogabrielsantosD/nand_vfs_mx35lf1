@@ -1035,32 +1035,21 @@ esp_err_t nand_is_bad_block(nand_handle_t h, uint16_t block, bool *is_bad)
         return ESP_ERR_INVALID_ARG;
     }
 
-    uint8_t spare0[NAND_SPARE_SIZE] = {0};
-    uint8_t spare1[NAND_SPARE_SIZE] = {0};
+    uint8_t d0[2] = {0};
+    nand_addr_t addr = {.block = block, .column = 0, .page = 0};
     esp_err_t ret;
 
-    /*
-     * Datasheet section 11-1:
-     * A block is bad if spare[0] of page 0 OR page 1 is not 0xFF.
-     * Good blocks ship with all cells set to 0xFF.
-     */
-    ret = nand_read_page(h, block, 0U, NULL, spare0, NULL);
+    ret = nand_read(h, addr, d0, sizeof(d0));
     if (ret != ESP_OK && ret != ESP_ERR_INVALID_CRC)
     {
         return ret;
     }
 
-    ret = nand_read_page(h, block, 1U, NULL, spare1, NULL);
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_CRC)
-    {
-        return ret;
-    }
-
-    *is_bad = (spare0[0] == 0x00U) || (spare1[0] == 0x00U);
+    *is_bad = (d0[0] == 0x00U) || (d0[1] == 0x00U);
 
     if (*is_bad)
     {
-        ESP_LOGW(TAG, "Bad block detected: %u (spare0[0]=0x%02X spare1[0]=0x%02X)", block, spare0[0], spare1[0]);
+        ESP_LOGW(TAG, "Bad block detected: %u (d0[0]=0x%02X d0[1]=0x%02X)", block, d0[0], d0[1]);
     }
     return ESP_OK;
 }

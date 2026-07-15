@@ -87,10 +87,10 @@ static void print_ecu_table(ecu_manager_handle_t mgr)
 /* DEMO 1: Streaming Write — simulates UART/TCP reception */
 static esp_err_t demo_stream_write(ecu_manager_handle_t mgr)
 {
-    print_sep("DEMO 1: Streaming Write (ECU_ENGINE, 1 MB .bin)");
+    print_sep("DEMO 1: Streaming Write (ECU_ENGINE, 1 5KB .bin)");
 
-    const uint32_t TOTAL_SIZE = 1024U * 1024U; /* 1 MB     */
-    const uint32_t CHUNK_SIZE = 4U * 1024U;    /* 4 KB por chunk */
+    const uint32_t TOTAL_SIZE = 1024U * 5; /* 5 KB     */
+    const uint32_t CHUNK_SIZE = 1024U;     /* 1 KB por chunk */
     const uint32_t NUM_CHUNKS = TOTAL_SIZE / CHUNK_SIZE;
 
     /* Chunk buffer — fits on the stack, but we use heap for safety */
@@ -120,10 +120,9 @@ static esp_err_t demo_stream_write(ecu_manager_handle_t mgr)
     for (uint32_t i = 0; i < NUM_CHUNKS; i++)
     {
         /* Fill the chunk with identifiable test data */
-        memset(chunk, (uint8_t) (i & 0xFFU), CHUNK_SIZE);
-        chunk[0] = (uint8_t) (i >> 8);
-        chunk[1] = (uint8_t) (i & 0xFF);
+        memset(chunk, (uint8_t) ((i + 1) & 0xFFU), CHUNK_SIZE);
 
+        ESP_LOG_BUFFER_HEX_LEVEL(TAG, chunk, CHUNK_SIZE, ESP_LOG_WARN);
         ret = ecu_writer_write(&wr, chunk, CHUNK_SIZE);
         if (ret != ESP_OK)
         {
@@ -131,12 +130,6 @@ static esp_err_t demo_stream_write(ecu_manager_handle_t mgr)
             ecu_writer_abort(&wr);
             free(chunk);
             return ret;
-        }
-
-        /* Log progress every 64 chunks (~256 KB) */
-        if ((i % 64U) == 63U || i == NUM_CHUNKS - 1U)
-        {
-            ESP_LOGI(TAG, "  Progress: %" PRIu32 "/%" PRIu32 " KB", (i + 1U) * CHUNK_SIZE / 1024U, TOTAL_SIZE / 1024U);
         }
     }
 
@@ -147,9 +140,9 @@ static esp_err_t demo_stream_write(ecu_manager_handle_t mgr)
 
     if (ret == ESP_OK)
     {
-        uint32_t kbps = (uint32_t) ((TOTAL_SIZE * 1000ULL) / (uint64_t) (elapsed_ms * 1024ULL));
-        ESP_LOGI(TAG, "  Commit OK in %" PRId64 " ms (~%" PRIu32 " KB/s)", elapsed_ms, kbps);
+        ESP_LOGI(TAG, "  Commit OK in %" PRId64 " ms", elapsed_ms);
     }
+
     return ret;
 }
 
@@ -158,8 +151,8 @@ static esp_err_t demo_stream_abort(ecu_manager_handle_t mgr)
 {
     print_sep("DEMO 2: Streaming Write com Abort (ECU_TEMP)");
 
-    const uint32_t TOTAL = 64U * 1024U; /* 64 KB */
-    const uint32_t CHUNK = 4096U;
+    const uint32_t TOTAL = 6U * 1024U; /* 6 KB */
+    const uint32_t CHUNK = 1024;
 
     uint8_t chunk[CHUNK];
     memset(chunk, 0xCC, sizeof(chunk));
@@ -187,7 +180,7 @@ static esp_err_t demo_stream_abort(ecu_manager_handle_t mgr)
 /* DEMO 3: Streaming Read — reads large firmware chunk by chunk */
 static esp_err_t demo_stream_read(ecu_manager_handle_t mgr)
 {
-    print_sep("DEMO 3: Streaming Read (ECU_ENGINE, 1 MB)");
+    print_sep("DEMO 3: Streaming Read (ECU_ENGINE, 5 KB)");
 
     ecu_reader_t rd;
     CHECK(ecu_reader_open(mgr, "ECU_ENGINE", ECU_FILE_BIN, &rd), "reader_open");
@@ -195,8 +188,8 @@ static esp_err_t demo_stream_read(ecu_manager_handle_t mgr)
     ESP_LOGI(TAG, "  File: %" PRIu32 " bytes (%" PRIu32 " KB)", rd.file_size, rd.file_size / 1024U);
     ESP_LOGI(TAG, "  Read  RAM usage: %u bytes (1 NAND page cache)", NAND_PAGE_SIZE);
 
-    /* Read in 4 KB chunks and simulate forwarding to the target ECU */
-    const uint32_t CHUNK_SIZE = 4U * 1024U;
+    /* Read in 2 KB chunks and simulate forwarding to the target ECU */
+    const uint32_t CHUNK_SIZE = 1024U;
     uint8_t *chunk = heap_caps_malloc(CHUNK_SIZE, MALLOC_CAP_DEFAULT);
     if (!chunk)
     {
@@ -211,6 +204,7 @@ static esp_err_t demo_stream_read(ecu_manager_handle_t mgr)
     {
         size_t got = 0;
         esp_err_t ret = ecu_reader_read(&rd, chunk, 1, CHUNK_SIZE, &got);
+        ESP_LOG_BUFFER_HEX_LEVEL(TAG, chunk, got <= 0 ? 1 : got, ESP_LOG_WARN);
         if (ret != ESP_OK || got == 0)
         {
             ESP_LOGE(TAG, "  Read error: %s", esp_err_to_name(ret));
@@ -221,12 +215,6 @@ static esp_err_t demo_stream_read(ecu_manager_handle_t mgr)
 
         /* Here we would send chunk[0..got-1] to the ECU over CAN/UART/OTA */
         total_sent += (uint32_t) got;
-
-        /* Log progress every 256 KB */
-        if ((total_sent % (256U * 1024U)) == 0U || rd.bytes_read == rd.file_size)
-        {
-            ESP_LOGI(TAG, "  Read: %" PRIu32 "/%" PRIu32 " KB", total_sent / 1024U, rd.file_size / 1024U);
-        }
     }
 
     free(chunk);
@@ -255,8 +243,8 @@ static esp_err_t demo_stream_multifile(ecu_manager_handle_t mgr)
 {
     print_sep("DEMO 4: Stream Write .prm e .idx (ECU_ENGINE)");
 
-    const uint32_t PRM_SIZE = 16U * 1024U; /* 16 KB */
-    const uint32_t IDX_SIZE = 4U * 1024U;  /*  4 KB */
+    const uint32_t PRM_SIZE = 2U * 1024U; /* 2 KB */
+    const uint32_t IDX_SIZE = 1U * 1024U; /*  1 KB */
 
     uint8_t *buf = heap_caps_malloc(4096U, MALLOC_CAP_DEFAULT);
     if (!buf)
@@ -275,25 +263,20 @@ static esp_err_t demo_stream_multifile(ecu_manager_handle_t mgr)
         return ret;
     }
 
-    uint32_t written = 0;
-    while (written < PRM_SIZE)
+    for (uint32_t i = 0; i < 2; i++)
     {
-        uint32_t chunk = PRM_SIZE - written;
-        if (chunk > 4096U)
-        {
-            chunk = 4096U;
-        }
+        /* Fill the chunk with identifiable test data */
+        memset(buf, (uint8_t) ((i + 1) * 5 & 0xFFU), PRM_SIZE / 2);
 
-        memset(buf, 0x11U, chunk);
-
-        ret = ecu_writer_write(&wr, buf, chunk);
+        // ESP_LOG_BUFFER_HEX_LEVEL(TAG, chunk, CHUNK_SIZE, ESP_LOG_WARN);
+        ret = ecu_writer_write(&wr, buf, PRM_SIZE / 2);
         if (ret != ESP_OK)
         {
+            ESP_LOGE(TAG, "  ERROR int the chunk %" PRIu32 ": %s", i, esp_err_to_name(ret));
             ecu_writer_abort(&wr);
             free(buf);
             return ret;
         }
-        written += chunk;
     }
 
     ret = ecu_writer_commit(&wr);
@@ -331,6 +314,13 @@ static esp_err_t demo_stream_multifile(ecu_manager_handle_t mgr)
     ESP_LOGI(TAG, "  .idx written: %" PRIu32 " KB", IDX_SIZE / 1024);
 
     free(buf);
+
+    uint8_t t[16] = {0};
+    memset(t, 0xaa, sizeof(t));
+    ecu_writer_begin(mgr, "ECU_TEST", NULL, 0, ECU_FILE_BIN, sizeof(t), &wr);
+    ecu_writer_write(&wr, t, sizeof(t));
+    ecu_writer_commit(&wr);
+
     return ESP_OK;
 }
 
@@ -357,10 +347,18 @@ static esp_err_t demo_subpage_read(ecu_manager_handle_t mgr)
 {
     print_sep("DEMO 6: Sub-page Read (1 byte at a time, first 16 bytes)");
 
-    ecu_reader_t rd;
-    CHECK(ecu_reader_open(mgr, "ECU_ABS", ECU_FILE_BIN, &rd), "reader_open subpage");
+    ecu_writer_t wr;
+    uint8_t t[512] = {0};
+    memset(t, 0xb3, sizeof(t));
 
-    /* Read 16 bytes, 1 byte at a time — exercises the page cache */
+    ecu_writer_begin(mgr, "ECU_ABS", NULL, 0, ECU_FILE_BIN, sizeof(t), &wr);
+    ecu_writer_write(&wr, t, sizeof(t));
+    ecu_writer_commit(&wr);
+
+    ecu_reader_t rd;
+    ecu_reader_open(mgr, "ECU_ABS", ECU_FILE_BIN, &rd);
+
+    // /* Read 16 bytes, 1 byte at a time — exercises the page cache */
     for (int i = 0; i < 16 && rd.bytes_read < rd.file_size; i++)
     {
         uint8_t byte = 0;
@@ -374,6 +372,55 @@ static esp_err_t demo_subpage_read(ecu_manager_handle_t mgr)
     }
 
     ecu_reader_close(&rd);
+
+    print_stats(mgr);
+    print_ecu_table(mgr);
+    ESP_LOGW(TAG, "Deleting the ECU_ABS firmware");
+    ecu_delete_firmware(mgr, "ECU_ABS");
+    return ESP_OK;
+}
+
+/* DEMO 7: Test addicional functions from ECU managet */
+static esp_err_t demo_debug_ecu_slots(ecu_manager_handle_t mgr)
+{
+    print_sep("DEMO 7: Addicional ecu manager test");
+
+    bool ecu_test;
+    uint8_t count;
+    ecu_info_t info1, info2;
+    ecu_get_active_slot_count(mgr, &count);
+    ecu_exists(mgr, "ECU_ENGINE", &ecu_test);
+    ecu_get_info(mgr, "ECU_ENGINE", &info1);
+    ecu_get_info_by_slot(mgr, 0, &info2);
+
+    ESP_LOGI(TAG, "ECUs count: %" PRId8, count);
+    ESP_LOGI(TAG, "Exist ECU_ENGINE: %s", ecu_test ? "YES" : "NO");
+    ESP_LOGI(TAG, "Info ECU_ENGINE OK: %s", strcmp(info1.ecu_name, info2.ecu_name) == 0 ? "YES" : "NO");
+
+    return ESP_OK;
+}
+
+/* DEMO 8: Scan bad blocks and format ecu manager */
+static esp_err_t demo_scan_and_format(ecu_manager_handle_t mgr)
+{
+    print_sep("DEMO 8: scan bad blocks and format manager");
+
+    esp_err_t ret = ecu_manager_scan_bbt(mgr);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to scan the bad blocks");
+        return ret;
+    }
+    ESP_LOGI(TAG, "Scan completed");
+
+    ret = ecu_manager_format(mgr);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to format the ecu manager");
+        return ret;
+    }
+    ESP_LOGI(TAG, "ECU manager formated");
+
     return ESP_OK;
 }
 
@@ -383,15 +430,15 @@ static esp_err_t run_all_demos(nand_handle_t nand, ecu_manager_handle_t mgr)
     print_stats(mgr);
     print_ecu_table(mgr);
 
-    CHECK(demo_stream_write(mgr), "demo_stream_write");
-    CHECK(demo_stream_abort(mgr), "demo_stream_abort");
-    CHECK(demo_stream_read(mgr), "demo_stream_read");
-#ifdef ECU_FW_MANAGER_SEEK_EXAMPLE
-    CHECK(demo_stream_seek(mgr), "demo_stream_seek");
-#endif
-    CHECK(demo_stream_multifile(mgr), "demo_stream_multifile");
-    CHECK(demo_verify(mgr), "demo_verify");
-    CHECK(demo_subpage_read(mgr), "demo_subpage_read");
+    // CHECK(demo_stream_write(mgr), "demo_stream_write");
+    // CHECK(demo_stream_abort(mgr), "demo_stream_abort");
+    // CHECK(demo_stream_read(mgr), "demo_stream_read");
+    // CHECK(demo_stream_multifile(mgr), "demo_stream_multifile");
+    // CHECK(demo_verify(mgr), "demo_verify");
+    // CHECK(demo_subpage_read(mgr), "demo_subpage_read");
+
+    // CHECK(demo_debug_ecu_slots(mgr), "demo_debug_ecu_slots");
+    // CHECK(demo_scan_and_format(mgr), "demo_scan_and_format");
 
     print_sep("Final state");
     print_stats(mgr);
@@ -415,6 +462,7 @@ static void nand_task(void *pv)
         .quadwp_io_num = NAND_PIN_WP,
         .quadhd_io_num = NAND_PIN_HOLD,
         .max_transfer_sz = NAND_SPI_MAX_TRANSFER,
+        .flags = SPICOMMON_BUSFLAG_MASTER,
     };
 
     ret = spi_bus_initialize(NAND_SPI_HOST, &bus, SPI_DMA_CH_AUTO);
@@ -435,7 +483,7 @@ static void nand_task(void *pv)
         .pin_hold = NAND_PIN_HOLD,
         .clock_speed_hz = NAND_CLOCK_HZ,
         .io_mode = NAND_IO_X1,
-        .disable_ecc = false,
+        .disable_ecc = true,
         .dma_chan = SPI_DMA_CH_AUTO,
     };
 

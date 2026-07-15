@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,6 +87,27 @@ static uint32_t ecu_bytes_to_blocks(uint32_t data_size)
     return (total + NAND_BLOCK_SIZE - 1U) / NAND_BLOCK_SIZE;
 }
 
+static inline ecu_file_slot_t *file_slot(ecu_slot_entry_t *slot, ecu_file_type_t ftype)
+{
+    return &slot->files[(uint8_t) ftype - 1U];
+}
+
+static inline const ecu_file_slot_t *file_slot_c(const ecu_slot_entry_t *slot, ecu_file_type_t ftype)
+{
+    return &slot->files[(uint8_t) ftype - 1U];
+}
+
+static inline const char *file_ext(ecu_file_type_t ftype)
+{
+    switch (ftype)
+    {
+        case ECU_FILE_BIN: return "bin";
+        case ECU_FILE_PRM: return "prm";
+        case ECU_FILE_IDX: return "idx";
+        default: return "bin";
+    }
+}
+
 static inline bool bbt_is_bad(const ecu_bbt_t *bbt, uint16_t block)
 {
     if (block >= NAND_BLOCKS_TOTAL)
@@ -123,9 +145,13 @@ static esp_err_t nand_write_pg(nand_handle_t nand, uint16_t blk, uint8_t pg, con
         return ESP_ERR_NO_MEM;
     }
 
+    uint8_t spare_buf[NAND_SPARE_SIZE];
+    memset(spare_buf, 0xAA, NAND_SPARE_SIZE);
+    spare_buf[0] = 0xFF;
+
     memset(buf, 0xFF, NAND_PAGE_SIZE);
     memcpy(buf, data, sz);
-    esp_err_t ret = nand_program_page(nand, blk, pg, buf, NULL);
+    esp_err_t ret = nand_program_page(nand, blk, pg, buf, spare_buf);
     free(buf);
     return ret;
 }
@@ -143,12 +169,13 @@ static esp_err_t nand_read_pg(nand_handle_t nand, uint16_t blk, uint8_t pg, void
         return ESP_ERR_NO_MEM;
     }
 
+    uint8_t spare_buf[NAND_SPARE_SIZE];
     nand_ecc_status_t ecc;
-    esp_err_t ret = nand_read_page(nand, blk, pg, buf, NULL, &ecc);
-    if (ret == ESP_OK || ret == ESP_ERR_INVALID_CRC)
+
+    esp_err_t ret = nand_read_page(nand, blk, pg, buf, spare_buf, &ecc);
+    if (ret == ESP_OK || ecc != NAND_ECC_UNCORRECTED)
     {
         memcpy(out, buf, sz);
-        ret = (ecc == NAND_ECC_UNCORRECTED) ? ESP_ERR_INVALID_CRC : ESP_OK;
     }
     free(buf);
     return ret;
@@ -156,67 +183,54 @@ static esp_err_t nand_read_pg(nand_handle_t nand, uint16_t blk, uint8_t pg, void
 
 static esp_err_t sb_save(struct ecu_mgr_t *m)
 {
-    const uint16_t BLK = ECU_RESERVED_BLOCK_START;
-
     m->sb.header_crc32 = ecu_crc32((const uint8_t *) &m->sb, offsetof(ecu_superblock_t, header_crc32));
+    m->bbt.crc32 = ecu_crc32(m->bbt.bitmap, sizeof(m->bbt.bitmap));
 
-    RET_ON_ERR(nand_erase_block(m->nand, BLK));
-    RET_ON_ERR(nand_write_pg(m->nand, BLK, ECU_SUPERBLOCK_PAGE_A, &m->sb, NAND_PAGE_SIZE));
+    RET_ON_ERR(nand_erase_block(m->nand, ECU_RESERVED_BLOCK_START));
 
-    size_t sb_sz = sizeof(ecu_superblock_t);
-    if (sb_sz > NAND_PAGE_SIZE)
+    // ESP_LOG_BUFFER_HEX_LEVEL(TAG, &m->sb, sizeof(m->sb), ESP_LOG_WARN);
+
+    RET_ON_ERR(nand_write_pg(m->nand, ECU_RESERVED_BLOCK_START, ECU_SUPERBLOCK_PAGE, &m->sb, sizeof(m->sb)));
+    RET_ON_ERR(nand_write_pg(m->nand, ECU_RESERVED_BLOCK_START, ECU_BBT_PAGE, &m->bbt, sizeof(m->bbt)));
+    RET_ON_ERR(nand_write_pg(m->nand, ECU_RESERVED_BLOCK_START, ECU_BBT_BAK_PAGE, &m->bbt, sizeof(m->bbt)));
+
+    ESP_LOGD(TAG, "Superblock saved: slots=%" PRIu16 " bad=%" PRIu32, m->sb.num_slots, m->bbt.num_bad_blocks);
+    return ESP_OK;
+}
+
+static esp_err_t bbt_read_and_check(struct ecu_mgr_t *m, uint8_t page, ecu_bbt_t *out)
+{
+    RET_ON_ERR(nand_read_pg(m->nand, ECU_RESERVED_BLOCK_START, page, out, sizeof(*out)));
+
+    if (out->magic != ECU_BBT_MAGIC)
     {
-        const uint8_t *ptr = (const uint8_t *) &m->sb + NAND_PAGE_SIZE;
-        size_t rem = sb_sz - NAND_PAGE_SIZE;
-        RET_ON_ERR(nand_write_pg(m->nand, BLK, ECU_SUPERBLOCK_PAGE_B, ptr, rem < NAND_PAGE_SIZE ? rem : NAND_PAGE_SIZE));
+        return ESP_ERR_INVALID_CRC;
     }
 
-    m->bbt.crc32 = ecu_crc32(m->bbt.bitmap, sizeof(m->bbt.bitmap));
-    size_t bbt_sz = sizeof(ecu_bbt_t);
-    RET_ON_ERR(nand_write_pg(m->nand, BLK, ECU_BBT_PAGE, &m->bbt, bbt_sz < NAND_PAGE_SIZE ? bbt_sz : NAND_PAGE_SIZE));
-
-    ESP_LOGD(TAG, "Superblock saved: slots=%" PRId16 " bad=%" PRId32, m->sb.num_slots, m->bbt.num_bad_blocks);
+    uint32_t crc = ecu_crc32(out->bitmap, sizeof(out->bitmap));
+    if (crc != out->crc32)
+    {
+        return ESP_ERR_INVALID_CRC;
+    }
     return ESP_OK;
 }
 
 static esp_err_t sb_load(struct ecu_mgr_t *m)
 {
-    const uint16_t BLK = ECU_RESERVED_BLOCK_START;
+    RET_ON_ERR(nand_read_pg(m->nand, ECU_RESERVED_BLOCK_START, ECU_SUPERBLOCK_PAGE, &m->sb, sizeof(m->sb)));
 
-    RET_ON_ERR(nand_read_pg(m->nand, BLK, ECU_SUPERBLOCK_PAGE_A, &m->sb, NAND_PAGE_SIZE));
-
-    size_t sb_sz = sizeof(ecu_superblock_t);
-    if (sb_sz > NAND_PAGE_SIZE)
+    esp_err_t ret = bbt_read_and_check(m, ECU_BBT_PAGE, &m->bbt);
+    if (ret != ESP_OK)
     {
-        uint8_t *ptr = (uint8_t *) &m->sb + NAND_PAGE_SIZE;
-        size_t rem = sb_sz - NAND_PAGE_SIZE;
-        uint8_t *tmp = heap_caps_malloc(NAND_PAGE_SIZE, MALLOC_CAP_DMA);
-        if (!tmp)
-        {
-            return ESP_ERR_NO_MEM;
-        }
-
-        esp_err_t ret = nand_read_pg(m->nand, BLK, ECU_SUPERBLOCK_PAGE_B, tmp, NAND_PAGE_SIZE);
-        if (ret == ESP_OK)
-        {
-            memcpy(ptr, tmp, rem < NAND_PAGE_SIZE ? rem : NAND_PAGE_SIZE);
-        }
-        free(tmp);
-
-        if (ret != ESP_OK)
-        {
-            return ret;
-        }
+        ESP_LOGW(TAG, "Primary BBT invalid, trying backup");
+        ret = bbt_read_and_check(m, ECU_BBT_BAK_PAGE, &m->bbt);
     }
-
-    size_t bbt_sz = sizeof(ecu_bbt_t);
-    return nand_read_pg(m->nand, BLK, ECU_BBT_PAGE, &m->bbt, bbt_sz < NAND_PAGE_SIZE ? bbt_sz : NAND_PAGE_SIZE);
+    return ret;
 }
 
 static esp_err_t alloc_blocks(struct ecu_mgr_t *m, uint32_t num_blocks, uint16_t *start)
 {
-    /* Bitmap of blocks already in use by active slots */
-    static uint8_t in_use[NAND_BLOCKS_TOTAL / 8U];
+    uint8_t in_use[NAND_BLOCKS_TOTAL / 8U];
     memset(in_use, 0, sizeof(in_use));
 
     for (uint8_t s = 0; s < ECU_MAX_SLOTS; s++)
@@ -227,19 +241,13 @@ static esp_err_t alloc_blocks(struct ecu_mgr_t *m, uint32_t num_blocks, uint16_t
             continue;
         }
 
-        for (uint16_t b = sl->bin_first_block; b < sl->bin_first_block + sl->bin_num_blocks && b < NAND_BLOCKS_TOTAL; b++)
+        for (uint8_t f = 0; f < ECU_FILE_COUNT; f++)
         {
-            in_use[b / 8] |= (uint8_t) (1U << (b % 8));
-        }
-
-        for (uint16_t b = sl->prm_first_block; b < sl->prm_first_block + sl->prm_num_blocks && b < NAND_BLOCKS_TOTAL; b++)
-        {
-            in_use[b / 8] |= (uint8_t) (1U << (b % 8));
-        }
-
-        for (uint16_t b = sl->idx_first_block; b < sl->idx_first_block + sl->idx_num_blocks && b < NAND_BLOCKS_TOTAL; b++)
-        {
-            in_use[b / 8] |= (uint8_t) (1U << (b % 8));
+            const ecu_file_slot_t *fs = &sl->files[f];
+            for (uint16_t b = fs->first_block; b < fs->first_block + fs->num_blocks && b < NAND_BLOCKS_TOTAL; b++)
+            {
+                in_use[b / 8U] |= (uint8_t) (1U << (b % 8U));
+            }
         }
     }
 
@@ -249,7 +257,7 @@ static esp_err_t alloc_blocks(struct ecu_mgr_t *m, uint32_t num_blocks, uint16_t
     for (uint16_t blk = ECU_DATA_BLOCK_START; blk <= ECU_DATA_BLOCK_END; blk++)
     {
         bool bad = bbt_is_bad(&m->bbt, blk);
-        bool used = (in_use[blk / 8] & (1U << (blk % 8))) != 0;
+        bool used = (in_use[blk / 8U] & (1U << (blk % 8U))) != 0;
 
         if (!bad && !used)
         {
@@ -270,6 +278,7 @@ static esp_err_t alloc_blocks(struct ecu_mgr_t *m, uint32_t num_blocks, uint16_t
             count = 0;
         }
     }
+
     ESP_LOGE(TAG, "No contiguous free blocks (%u required)", (unsigned) num_blocks);
     return ESP_ERR_NO_MEM;
 }
@@ -306,13 +315,18 @@ static const ecu_slot_entry_t *find_active_slot(const struct ecu_mgr_t *m, const
     return NULL;
 }
 
+static void slot_reset_empty(ecu_slot_entry_t *slot, uint8_t slot_id)
+{
+    memset(slot, 0, sizeof(*slot));
+    slot->status = ECU_SLOT_EMPTY;
+    slot->slot_id = slot_id;
+    slot->magic = ECU_SLOT_MAGIC;
+}
+
 /**
- * @brief Convert a logical page index to a physical NAND block and page
- *        to a physical NAND block and page number.
+ * @brief Convert a logical page index to a physical NAND block and page.
  *
  * Logical page 0 -> first_block, page 0 (contains the file header)
- * Logical page 1 -> first_block, page 1
- * ...
  * Logical page 63 -> first_block, page 63
  * Logical page 64 -> first_block+1, page 0
  */
@@ -320,15 +334,6 @@ static inline void logical_page_to_physical(uint32_t logical_page, uint16_t firs
 {
     *out_block = first_block + (uint16_t) (logical_page / NAND_PAGES_PER_BLOCK);
     *out_page = (uint8_t) (logical_page % NAND_PAGES_PER_BLOCK);
-}
-
-/**
- * @brief Compute the logical page index for a given byte offset
- *        within the file (including the header at offset 0).
- */
-static inline uint32_t byte_offset_to_logical_page(uint32_t byte_offset)
-{
-    return byte_offset / NAND_PAGE_SIZE;
 }
 
 esp_err_t ecu_manager_init(ecu_manager_handle_t *out_handle, nand_handle_t nand)
@@ -383,7 +388,7 @@ esp_err_t ecu_manager_init(ecu_manager_handle_t *out_handle, nand_handle_t nand)
 
     m->initialized = true;
     *out_handle = m;
-    ESP_LOGI(TAG, "Initialized: %" PRId16 " ECUs, %" PRId32 " bad blocks", m->sb.num_slots, m->bbt.num_bad_blocks);
+    ESP_LOGI(TAG, "Initialized: %" PRIu16 " ECUs, %" PRIu32 " bad blocks", m->sb.num_slots, m->bbt.num_bad_blocks);
     return ESP_OK;
 
 fail:
@@ -402,12 +407,51 @@ esp_err_t ecu_manager_deinit(ecu_manager_handle_t mgr)
     return ESP_OK;
 }
 
+static esp_err_t scan_bbt_locked(struct ecu_mgr_t *m)
+{
+    ESP_LOGI(TAG, "Scanning for bad blocks...");
+    memset(m->bbt.bitmap, 0, sizeof(m->bbt.bitmap));
+    m->bbt.num_bad_blocks = 0;
+
+    for (uint16_t b = 1; b < NAND_BLOCKS_TOTAL; b++)
+    {
+        bool is_bad = false;
+        if (nand_is_bad_block(m->nand, b, &is_bad) == ESP_OK && is_bad)
+        {
+            bbt_mark_bad(&m->bbt, b);
+        }
+    }
+
+    m->bbt.magic = ECU_BBT_MAGIC;
+    m->bbt.timestamp = (uint32_t) (esp_timer_get_time() / 1000000LL);
+
+    ESP_LOGI(TAG, "Scan complete: %" PRIu32 " bad blocks", m->bbt.num_bad_blocks);
+    return ESP_OK;
+}
+
+esp_err_t ecu_manager_scan_bbt(ecu_manager_handle_t mgr)
+{
+    MGR_CHECK_ARG(mgr);
+    struct ecu_mgr_t *m = mgr;
+
+    MGR_LOCK(m);
+    esp_err_t ret = scan_bbt_locked(m);
+    if (ret == ESP_OK)
+    {
+        ret = sb_save(m);
+    }
+    MGR_UNLOCK(m);
+    return ret;
+}
+
 esp_err_t ecu_manager_format(ecu_manager_handle_t mgr)
 {
     MGR_CHECK_ARG(mgr);
     struct ecu_mgr_t *m = mgr;
 
     ESP_LOGW(TAG, "Formatting management area...");
+
+    MGR_LOCK(m);
     memset(&m->sb, 0, sizeof(m->sb));
     memset(&m->bbt, 0, sizeof(m->bbt));
 
@@ -419,66 +463,36 @@ esp_err_t ecu_manager_format(ecu_manager_handle_t mgr)
 
     for (uint8_t s = 0; s < ECU_MAX_SLOTS; s++)
     {
-        m->sb.slots[s].status = ECU_SLOT_EMPTY;
-        m->sb.slots[s].slot_id = s;
-        m->sb.slots[s].magic = ECU_SLOT_MAGIC;
+        slot_reset_empty(&m->sb.slots[s], s);
     }
     m->bbt.magic = ECU_BBT_MAGIC;
 
-    RET_ON_ERR(ecu_manager_scan_bbt(m));
-    return sb_save(m);
-}
-
-esp_err_t ecu_manager_scan_bbt(ecu_manager_handle_t mgr)
-{
-    MGR_CHECK_ARG(mgr);
-    struct ecu_mgr_t *m = mgr;
-
-    ESP_LOGI(TAG, "Scanning for bad blocks...");
-    memset(m->bbt.bitmap, 0, sizeof(m->bbt.bitmap));
-    m->bbt.num_bad_blocks = 0;
-
-    for (uint16_t b = 0; b < NAND_BLOCKS_TOTAL; b++)
+    esp_err_t ret = scan_bbt_locked(m);
+    if (ret == ESP_OK)
     {
-        bool is_bad = false;
-        if (nand_is_bad_block(m->nand, b, &is_bad) == ESP_OK && is_bad)
-        {
-            bbt_mark_bad(&m->bbt, b);
-        }
+        ret = sb_save(m);
     }
-
-    m->bbt.magic = ECU_BBT_MAGIC;
-    m->bbt.crc32 = ecu_crc32(m->bbt.bitmap, sizeof(m->bbt.bitmap));
-    m->bbt.timestamp = (uint32_t) (esp_timer_get_time() / 1000000LL);
-
-    ESP_LOGI(TAG, "Scan complete: %" PRId32 " bad blocks", m->bbt.num_bad_blocks);
-    return ESP_OK;
+    MGR_UNLOCK(m);
+    return ret;
 }
 
 /**
- * @brief Erase all NAND blocks belonging to a slot (internal helper).
+ * @brief Erase all NAND blocks belonging to one file of a slot.
  */
-static void erase_slot_blocks(nand_handle_t nand, const ecu_slot_entry_t *sl)
+static void erase_file_blocks(nand_handle_t nand, const ecu_file_slot_t *fs)
 {
-    for (uint16_t b = sl->bin_first_block; b < sl->bin_first_block + sl->bin_num_blocks; b++)
+    for (uint16_t b = fs->first_block; b < fs->first_block + fs->num_blocks; b++)
     {
         nand_erase_block(nand, b);
     }
+}
 
-    if (sl->prm_num_blocks)
+/** Erase all NAND blocks belonging to a slot (all 3 files). */
+static void erase_slot_blocks(nand_handle_t nand, const ecu_slot_entry_t *sl)
+{
+    for (uint8_t f = 0; f < ECU_FILE_COUNT; f++)
     {
-        for (uint16_t b = sl->prm_first_block; b < sl->prm_first_block + sl->prm_num_blocks; b++)
-        {
-            nand_erase_block(nand, b);
-        }
-    }
-
-    if (sl->idx_num_blocks)
-    {
-        for (uint16_t b = sl->idx_first_block; b < sl->idx_first_block + sl->idx_num_blocks; b++)
-        {
-            nand_erase_block(nand, b);
-        }
+        erase_file_blocks(nand, &sl->files[f]);
     }
 }
 
@@ -487,7 +501,7 @@ esp_err_t ecu_writer_begin(ecu_manager_handle_t mgr, const char *ecu_name, const
     MGR_CHECK(mgr);
     MGR_CHECK_ARG(ecu_name);
     MGR_CHECK_ARG(writer);
-    if (total_size == 0)
+    if (total_size == 0 || (ftype != ECU_FILE_BIN && ftype != ECU_FILE_PRM && ftype != ECU_FILE_IDX))
     {
         return ESP_ERR_INVALID_ARG;
     }
@@ -495,16 +509,11 @@ esp_err_t ecu_writer_begin(ecu_manager_handle_t mgr, const char *ecu_name, const
     struct ecu_mgr_t *m = mgr;
     memset(writer, 0, sizeof(ecu_writer_t));
 
-    /* Allocate the working buffer and the first-page hold buffer */
     writer->_page_buf = heap_caps_malloc(NAND_PAGE_SIZE * 2U, MALLOC_CAP_DMA);
     if (!writer->_page_buf)
     {
         return ESP_ERR_NO_MEM;
     }
-
-    /* _page_buf[0..PAGE_SIZE-1]           : working buffer (page in assembly) */
-    /* _page_buf[PAGE_SIZE..2*PAGE_SIZE-1] : first-page hold buffer —        */
-    /*                                       written last in commit()        */
     memset(writer->_page_buf, 0xFF, NAND_PAGE_SIZE * 2U);
 
     MGR_LOCK(m);
@@ -519,116 +528,79 @@ esp_err_t ecu_writer_begin(ecu_manager_handle_t mgr, const char *ecu_name, const
     }
 
     ecu_slot_entry_t *slot = &m->sb.slots[(uint8_t) slot_idx];
+    bool slot_was_new = (slot->status != ECU_SLOT_ACTIVE && slot->status != ECU_SLOT_UPDATING);
 
-    /* Erase old data if the slot already existed */
+    // ecu_slot_entry_t slot_backup = *slot;
+
     if (slot->status == ECU_SLOT_ACTIVE)
     {
         ESP_LOGI(TAG, "Replacing '%s' ftype=%u", ecu_name, (unsigned) ftype);
-        /* Erase only the blocks belonging to the file type being replaced */
-        switch (ftype)
-        {
-            case ECU_FILE_BIN:
-                for (uint16_t b = slot->bin_first_block; b < slot->bin_first_block + slot->bin_num_blocks; b++)
-                {
-                    nand_erase_block(m->nand, b);
-                }
-                break;
-            case ECU_FILE_PRM:
-                for (uint16_t b = slot->prm_first_block; b < slot->prm_first_block + slot->prm_num_blocks; b++)
-                {
-                    nand_erase_block(m->nand, b);
-                }
-                break;
-            case ECU_FILE_IDX:
-                for (uint16_t b = slot->idx_first_block; b < slot->idx_first_block + slot->idx_num_blocks; b++)
-                {
-                    nand_erase_block(m->nand, b);
-                }
-                break;
-        }
+        erase_file_blocks(m->nand, file_slot(slot, ftype));
     }
 
-    /* Initialize / re-initialize the slot */
-    if (slot->status != ECU_SLOT_ACTIVE && slot->status != ECU_SLOT_UPDATING)
+    if (slot_was_new)
     {
-        memset(slot, 0, sizeof(ecu_slot_entry_t));
-        slot->magic = ECU_SLOT_MAGIC;
-        slot->slot_id = (uint8_t) slot_idx;
+        slot_reset_empty(slot, (uint8_t) slot_idx);
     }
     slot->status = ECU_SLOT_UPDATING;
     strlcpy(slot->ecu_name, ecu_name, ECU_NAME_MAX_LEN);
     strlcpy(slot->fw_version, fw_version ? fw_version : "", ECU_VERSION_MAX_LEN);
     slot->hw_id = hw_id;
 
-    /* Allocate NAND blocks for this file */
     uint16_t num_blk = (uint16_t) ecu_bytes_to_blocks(total_size);
+    ecu_file_slot_t *fs = file_slot(slot, ftype);
+
+    fs->first_block = 0;
+    fs->num_blocks = num_blk;
+    fs->size = total_size;
+
     uint16_t first_blk = 0;
-
-    /* Pre-fill slot fields so alloc_blocks skips these blocks during search */
-    switch (ftype)
-    {
-        case ECU_FILE_BIN:
-            slot->bin_first_block = 0;
-            slot->bin_num_blocks = num_blk;
-            slot->bin_size = total_size;
-            break;
-        case ECU_FILE_PRM:
-            slot->prm_first_block = 0;
-            slot->prm_num_blocks = num_blk;
-            slot->prm_size = total_size;
-            break;
-        case ECU_FILE_IDX:
-            slot->idx_first_block = 0;
-            slot->idx_num_blocks = num_blk;
-            slot->idx_size = total_size;
-            break;
-    }
-
     esp_err_t ret = alloc_blocks(m, num_blk, &first_blk);
     if (ret != ESP_OK)
     {
+        // *slot = slot_backup;
         MGR_UNLOCK(m);
         free(writer->_page_buf);
         writer->_page_buf = NULL;
         return ret;
     }
 
-    /* Updates the slot with the actual blocks. */
-    switch (ftype)
-    {
-        case ECU_FILE_BIN:
-            slot->bin_first_block = first_blk;
-            slot->bin_num_blocks = num_blk;
-            break;
-        case ECU_FILE_PRM:
-            slot->prm_first_block = first_blk;
-            slot->prm_num_blocks = num_blk;
-            break;
-        case ECU_FILE_IDX:
-            slot->idx_first_block = first_blk;
-            slot->idx_num_blocks = num_blk;
-            break;
-    }
+    fs->first_block = first_blk;
+    fs->num_blocks = num_blk;
 
-    /* Save superblock as UPDATING (atomic: if reset here the slot is detectable) */
-    sb_save(m);
+    // ESP_LOGW(TAG, "FIRST BLOCK: %d", fs->first_block);
+    // ESP_LOGW(TAG, "NUM OF BLOCKS: %d", fs->num_blocks);
+
+    ret = sb_save(m);
+    if (ret != ESP_OK)
+    {
+        // *slot = slot_backup;
+        MGR_UNLOCK(m);
+        free(writer->_page_buf);
+        writer->_page_buf = NULL;
+        return ret;
+    }
 
     MGR_UNLOCK(m);
 
-    /* Erase the newly allocated blocks */
     for (uint16_t b = first_blk; b < first_blk + num_blk; b++)
     {
         ret = nand_erase_block(m->nand, b);
         if (ret != ESP_OK)
         {
             ESP_LOGE(TAG, "Failed to erase block %u", b);
+
+            MGR_LOCK(m);
+            // *slot = slot_backup;
+            sb_save(m);
+            MGR_UNLOCK(m);
+
             free(writer->_page_buf);
             writer->_page_buf = NULL;
             return ret;
         }
     }
 
-    /* Populate the writer context */
     writer->_mgr = mgr;
     writer->_ftype = ftype;
     writer->_slot_idx = (uint8_t) slot_idx;
@@ -636,8 +608,8 @@ esp_err_t ecu_writer_begin(ecu_manager_handle_t mgr, const char *ecu_name, const
     writer->_num_blocks = num_blk;
     writer->_cur_block = first_blk;
     writer->_cur_page = 0U;
-    writer->_crc_accum = 0xFFFFFFFFUL;         /* initial CRC32 state */
-    writer->_page_fill = ECU_FILE_HEADER_SIZE; /* reserve space for the file header */
+    writer->_crc_accum = 0xFFFFFFFFUL;
+    writer->_page_fill = ECU_FILE_HEADER_SIZE;
     writer->_first_page = true;
     writer->total_size = total_size;
     writer->bytes_written = 0U;
@@ -646,29 +618,21 @@ esp_err_t ecu_writer_begin(ecu_manager_handle_t mgr, const char *ecu_name, const
     writer->_hw_id = hw_id;
     writer->_valid = true;
 
-    ESP_LOGI(TAG, "Writer aberto: '%s' ftype=%u size=%u blocos=%u..%u", ecu_name, (unsigned) ftype, (unsigned) total_size, first_blk, (unsigned) (first_blk + num_blk - 1U));
+    ESP_LOGI(TAG, "Writer opened: '%s' ftype=%u size=%u blocks=%u..%u", ecu_name, (unsigned) ftype, (unsigned) total_size, first_blk, (unsigned) (first_blk + num_blk - 1U));
 
     return ESP_OK;
 }
 
-/**
- * @brief Internal flush: write the current page buffer to NAND.
- *
- * If this is the first page (_first_page == true), the content is copied
- * para o buffer reservado (_page_buf + NAND_PAGE_SIZE) em vez de
- * into the hold buffer instead of being written — it will be written last
- */
+/** @brief Internal flush: write the current page buffer to NAND. */
 static esp_err_t writer_flush_page(ecu_writer_t *wr)
 {
     if (wr->_page_fill == 0 || (wr->_first_page && wr->_page_fill == ECU_FILE_HEADER_SIZE))
     {
-        /* Nothing to write beyond the empty header placeholder */
         return ESP_OK;
     }
 
     struct ecu_mgr_t *m = wr->_mgr;
 
-    /* Pad unused bytes with 0xFF (erased state) */
     if (wr->_page_fill < NAND_PAGE_SIZE)
     {
         memset(wr->_page_buf + wr->_page_fill, 0xFF, NAND_PAGE_SIZE - wr->_page_fill);
@@ -676,11 +640,9 @@ static esp_err_t writer_flush_page(ecu_writer_t *wr)
 
     if (wr->_first_page)
     {
-        /* Copy the first page into the hold buffer; commit() will write it last */
         memcpy(wr->_page_buf + NAND_PAGE_SIZE, wr->_page_buf, NAND_PAGE_SIZE);
         wr->_first_page = false;
         wr->_page_fill = 0;
-        /* Advance to the next page */
         wr->_cur_page++;
         if (wr->_cur_page >= NAND_PAGES_PER_BLOCK)
         {
@@ -690,15 +652,13 @@ static esp_err_t writer_flush_page(ecu_writer_t *wr)
         return ESP_OK;
     }
 
-    /* Write a normal page to NAND */
     esp_err_t ret = nand_program_page(m->nand, wr->_cur_block, wr->_cur_page, wr->_page_buf, NULL);
     if (ret != ESP_OK)
     {
-        ESP_LOGE(TAG, "Program page falhou blk=%u pg=%u: %s", wr->_cur_block, wr->_cur_page, esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Program page failed blk=%u pg=%u: %s", wr->_cur_block, wr->_cur_page, esp_err_to_name(ret));
         return ret;
     }
 
-    /* Advance write cursor */
     wr->_page_fill = 0;
     wr->_cur_page++;
     if (wr->_cur_page >= NAND_PAGES_PER_BLOCK)
@@ -733,12 +693,9 @@ esp_err_t ecu_writer_write(ecu_writer_t *writer, const uint8_t *data, uint32_t l
 
     while (remaining > 0)
     {
-        /* Space remaining in the current page buffer */
         uint16_t space = (uint16_t) (NAND_PAGE_SIZE - writer->_page_fill);
-
         uint32_t chunk = (remaining < (uint32_t) space) ? remaining : (uint32_t) space;
 
-        /* Copy into the page buffer and update the CRC accumulator */
         memcpy(writer->_page_buf + writer->_page_fill, src, chunk);
         writer->_crc_accum = ecu_crc32_update(writer->_crc_accum, src, chunk);
 
@@ -747,7 +704,6 @@ esp_err_t ecu_writer_write(ecu_writer_t *writer, const uint8_t *data, uint32_t l
         src += chunk;
         remaining -= chunk;
 
-        /* If the buffer fills up, it flushes to NAND. */
         if (writer->_page_fill >= NAND_PAGE_SIZE)
         {
             esp_err_t ret = writer_flush_page(writer);
@@ -769,7 +725,6 @@ esp_err_t ecu_writer_commit(ecu_writer_t *writer)
         return ESP_ERR_INVALID_STATE;
     }
 
-    /* Verify that exactly total_size bytes were written */
     if (writer->bytes_written != writer->total_size)
     {
         ESP_LOGE(TAG, "commit: written=%u != declared total=%u", (unsigned) writer->bytes_written, (unsigned) writer->total_size);
@@ -780,8 +735,7 @@ esp_err_t ecu_writer_commit(ecu_writer_t *writer)
     struct ecu_mgr_t *m = writer->_mgr;
     esp_err_t ret;
 
-    /* Flush the last partial page (if it contains any data) */
-    if (writer->_page_fill > 0 && !writer->_first_page)
+    if (writer->_page_fill > 0)
     {
         ret = writer_flush_page(writer);
         if (ret != ESP_OK)
@@ -791,21 +745,8 @@ esp_err_t ecu_writer_commit(ecu_writer_t *writer)
         }
     }
 
-    else if (writer->_page_fill > 0 && writer->_first_page)
-    {
-        /* Small file: everything fits in a single page */
-        ret = writer_flush_page(writer);
-        if (ret != ESP_OK)
-        {
-            writer->_valid = false;
-            return ret;
-        }
-    }
-
-    /* Finalize CRC32 */
     uint32_t final_crc = ~writer->_crc_accum;
 
-    /* Build the file header and place it into the first-page hold buffer */
     uint8_t *first_page_buf = writer->_page_buf + NAND_PAGE_SIZE;
     ecu_file_header_t hdr;
     memset(&hdr, 0, sizeof(hdr));
@@ -819,12 +760,11 @@ esp_err_t ecu_writer_commit(ecu_writer_t *writer)
     hdr.timestamp = (uint32_t) (esp_timer_get_time() / 1000000LL);
 
     char fname[ECU_MAX_FILENAME];
-    snprintf(fname, sizeof(fname), "%s.%s", writer->_ecu_name, writer->_ftype == ECU_FILE_BIN ? "bin" : writer->_ftype == ECU_FILE_PRM ? "prm" : "idx");
+    snprintf(fname, sizeof(fname), "%s.%s", writer->_ecu_name, file_ext(writer->_ftype));
     strlcpy(hdr.filename, fname, ECU_MAX_FILENAME);
 
     memcpy(first_page_buf, &hdr, sizeof(hdr));
 
-    /* Write Page 0 (held in RAM since begin()) */
     ret = nand_program_page(m->nand, writer->_first_block, 0U, first_page_buf, NULL);
     if (ret != ESP_OK)
     {
@@ -833,30 +773,23 @@ esp_err_t ecu_writer_commit(ecu_writer_t *writer)
         return ret;
     }
 
-    /* Update the slot in the superblock */
     MGR_LOCK(m);
     ecu_slot_entry_t *slot = &m->sb.slots[writer->_slot_idx];
-
-    switch (writer->_ftype)
-    {
-        case ECU_FILE_BIN:
-            slot->bin_crc32 = final_crc;
-            slot->bin_size = writer->total_size;
-            break;
-        case ECU_FILE_PRM:
-            slot->prm_crc32 = final_crc;
-            slot->prm_size = writer->total_size;
-            break;
-        case ECU_FILE_IDX:
-            slot->idx_crc32 = final_crc;
-            slot->idx_size = writer->total_size;
-            break;
-    }
+    ecu_file_slot_t *fs = file_slot(slot, writer->_ftype);
+    fs->crc32 = final_crc;
+    fs->size = writer->total_size;
 
     slot->status = ECU_SLOT_ACTIVE;
     slot->timestamp_updated = (uint32_t) (esp_timer_get_time() / 1000000LL);
+    if (slot->timestamp_created == 0)
+    {
+        slot->timestamp_created = slot->timestamp_updated;
+    }
 
-    /* Increment slot count only on first activation */
+    uint8_t c = 0;
+    ecu_get_active_slot_count(m, &c);
+    m->sb.num_slots = c;
+
     bool already_counted = false;
     for (uint8_t s = 0; s < ECU_MAX_SLOTS; s++)
     {
@@ -880,7 +813,6 @@ esp_err_t ecu_writer_commit(ecu_writer_t *writer)
     ret = sb_save(m);
     MGR_UNLOCK(m);
 
-    /* Release resources */
     free(writer->_page_buf);
     writer->_page_buf = NULL;
     writer->_valid = false;
@@ -902,51 +834,34 @@ esp_err_t ecu_writer_abort(ecu_writer_t *writer)
 
     struct ecu_mgr_t *m = writer->_mgr;
 
-    /* Erase the newly allocated blocks */
     for (uint16_t b = writer->_first_block; b < writer->_first_block + writer->_num_blocks; b++)
     {
         nand_erase_block(m->nand, b);
     }
 
-    /* Clear file-specific fields in the superblock slot */
     MGR_LOCK(m);
     ecu_slot_entry_t *slot = &m->sb.slots[writer->_slot_idx];
+    ecu_file_slot_t *fs = file_slot(slot, writer->_ftype);
+    memset(fs, 0, sizeof(*fs));
 
-    /* Clear only the metadata for the file that was being written */
-    switch (writer->_ftype)
+    bool any_file = false;
+    for (uint8_t f = 0; f < ECU_FILE_COUNT; f++)
     {
-        case ECU_FILE_BIN:
-            slot->bin_first_block = 0;
-            slot->bin_num_blocks = 0;
-            slot->bin_size = 0;
-            slot->bin_crc32 = 0;
+        if (slot->files[f].size > 0)
+        {
+            any_file = true;
             break;
-        case ECU_FILE_PRM:
-            slot->prm_first_block = 0;
-            slot->prm_num_blocks = 0;
-            slot->prm_size = 0;
-            slot->prm_crc32 = 0;
-            break;
-        case ECU_FILE_IDX:
-            slot->idx_first_block = 0;
-            slot->idx_num_blocks = 0;
-            slot->idx_size = 0;
-            slot->idx_crc32 = 0;
-            break;
+        }
     }
 
-    /* If no file was written successfully, free the entire slot */
-    if (slot->bin_size == 0 && slot->prm_size == 0 && slot->idx_size == 0)
+    if (!any_file)
     {
-        memset(slot, 0, sizeof(ecu_slot_entry_t));
-        slot->status = ECU_SLOT_EMPTY;
-        slot->slot_id = writer->_slot_idx;
-        slot->magic = ECU_SLOT_MAGIC;
+        slot_reset_empty(slot, writer->_slot_idx);
     }
 
     else
     {
-        slot->status = ECU_SLOT_ACTIVE; /* Previously committed files are still valid */
+        slot->status = ECU_SLOT_ACTIVE;
     }
 
     sb_save(m);
@@ -960,22 +875,16 @@ esp_err_t ecu_writer_abort(ecu_writer_t *writer)
     return ESP_OK;
 }
 
-/**
- * @brief Load a NAND page into the reader cache if not already present.
- *
- * @param logical_page  Logical page index within the file.
- *                      Page 0 = first page (contains the file header).
- */
+/** @brief Load a NAND page into the reader cache if not already present. */
 static esp_err_t reader_load_page(ecu_reader_t *rd, uint32_t logical_page)
 {
     uint16_t blk;
     uint8_t pg;
     logical_page_to_physical(logical_page, rd->_first_block, &blk, &pg);
 
-    /* Cache hit: the requested page is already loaded */
     if (rd->_cache_valid && rd->_cache_block == blk && rd->_cache_page == pg)
     {
-        return ESP_OK;
+        return ESP_OK; /* cache hit */
     }
 
     struct ecu_mgr_t *m = rd->_mgr;
@@ -1004,6 +913,10 @@ esp_err_t ecu_reader_open(ecu_manager_handle_t mgr, const char *ecu_name, ecu_fi
     MGR_CHECK(mgr);
     MGR_CHECK_ARG(ecu_name);
     MGR_CHECK_ARG(reader);
+    if (ftype != ECU_FILE_BIN && ftype != ECU_FILE_PRM && ftype != ECU_FILE_IDX)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
 
     struct ecu_mgr_t *m = mgr;
     memset(reader, 0, sizeof(ecu_reader_t));
@@ -1014,52 +927,19 @@ esp_err_t ecu_reader_open(ecu_manager_handle_t mgr, const char *ecu_name, ecu_fi
         return ESP_ERR_NOT_FOUND;
     }
 
-    /* Resolve the first block and file size for the requested file type */
-    uint16_t first_blk = 0;
-    uint32_t file_size = 0;
-    uint32_t exp_crc = 0;
-
-    switch (ftype)
+    const ecu_file_slot_t *fs = file_slot_c(sl, ftype);
+    if (fs->size == 0)
     {
-        case ECU_FILE_BIN:
-            if (sl->bin_size == 0)
-            {
-                return ESP_ERR_NOT_FOUND;
-            }
-            first_blk = sl->bin_first_block;
-            file_size = sl->bin_size;
-            exp_crc = sl->bin_crc32;
-            break;
-        case ECU_FILE_PRM:
-            if (sl->prm_size == 0)
-            {
-                return ESP_ERR_NOT_FOUND;
-            }
-            first_blk = sl->prm_first_block;
-            file_size = sl->prm_size;
-            exp_crc = sl->prm_crc32;
-            break;
-        case ECU_FILE_IDX:
-            if (sl->idx_size == 0)
-            {
-                return ESP_ERR_NOT_FOUND;
-            }
-            first_blk = sl->idx_first_block;
-            file_size = sl->idx_size;
-            exp_crc = sl->idx_crc32;
-            break;
-        default: return ESP_ERR_INVALID_ARG;
+        return ESP_ERR_NOT_FOUND;
     }
 
-    /* Allocate the DMA-capable page cache */
     reader->_page_cache = heap_caps_malloc(NAND_PAGE_SIZE, MALLOC_CAP_DMA);
     if (!reader->_page_cache)
     {
         return ESP_ERR_NO_MEM;
     }
 
-    /* Load the first page to validate the file magic number */
-    reader->_first_block = first_blk;
+    reader->_first_block = fs->first_block;
     reader->_mgr = mgr;
 
     esp_err_t ret = reader_load_page(reader, 0U);
@@ -1070,23 +950,24 @@ esp_err_t ecu_reader_open(ecu_manager_handle_t mgr, const char *ecu_name, ecu_fi
         return ret;
     }
 
+    // ESP_LOG_BUFFER_HEX_LEVEL(TAG, reader->_page_cache, NAND_PAGE_SIZE, ESP_LOG_WARN);
     const ecu_file_header_t *hdr = (const ecu_file_header_t *) reader->_page_cache;
     if (hdr->magic != ECU_FILE_MAGIC)
     {
-        ESP_LOGE(TAG, "Invalid file magic at block %u: 0x%08X", first_blk, (unsigned) hdr->magic);
+        ESP_LOGE(TAG, "Invalid file magic at block %u: 0x%08X", fs->first_block, (unsigned) hdr->magic);
         free(reader->_page_cache);
         reader->_page_cache = NULL;
         return ESP_ERR_NOT_FOUND;
     }
 
-    reader->file_size = file_size;
+    reader->file_size = fs->size;
     reader->bytes_read = 0U;
-    reader->_expected_crc = exp_crc;
+    reader->_expected_crc = fs->crc32;
     reader->_crc_accum = 0xFFFFFFFFUL;
     reader->_cache_valid = true;
     reader->_valid = true;
 
-    ESP_LOGD(TAG, "Reader opened: '%s' ftype=%u size=%u", ecu_name, (unsigned) ftype, (unsigned) file_size);
+    ESP_LOGD(TAG, "Reader opened: '%s' ftype=%u size=%u", ecu_name, (unsigned) ftype, (unsigned) fs->size);
 
     return ESP_OK;
 }
@@ -1111,7 +992,6 @@ esp_err_t ecu_reader_read(ecu_reader_t *reader, void *buf, size_t size, size_t c
     uint32_t want_bytes = (uint32_t) (size * count);
     uint32_t available = reader->file_size - reader->bytes_read;
 
-    /* Limit it to what is left to read. */
     if (want_bytes > available)
     {
         want_bytes = available;
@@ -1127,23 +1007,16 @@ esp_err_t ecu_reader_read(ecu_reader_t *reader, void *buf, size_t size, size_t c
 
     while (done < want_bytes)
     {
-        /*
-         * Absolute byte offset within the stored layout (header + data):
-         *   abs_offset = ECU_FILE_HEADER_SIZE + bytes_read + done
-         * This maps directly to a logical page index and an intra-page offset.
-         */
         uint32_t abs_offset = ECU_FILE_HEADER_SIZE + reader->bytes_read + done;
         uint32_t logical_pg = abs_offset / NAND_PAGE_SIZE;
         uint16_t pg_offset = (uint16_t) (abs_offset % NAND_PAGE_SIZE);
 
-        /* Load the required page into cache (no-op on cache hit) */
         esp_err_t ret = reader_load_page(reader, logical_pg);
         if (ret != ESP_OK)
         {
             return ret;
         }
 
-        /* Copy available bytes from the cached page */
         uint16_t avail_in_page = (uint16_t) (NAND_PAGE_SIZE - pg_offset);
         uint32_t to_copy = want_bytes - done;
         if (to_copy > (uint32_t) avail_in_page)
@@ -1152,15 +1025,12 @@ esp_err_t ecu_reader_read(ecu_reader_t *reader, void *buf, size_t size, size_t c
         }
 
         memcpy(dst + done, reader->_page_cache + pg_offset, to_copy);
-
-        /* Accumulates CRC on the returned data bytes. */
         reader->_crc_accum = ecu_crc32_update(reader->_crc_accum, dst + done, to_copy);
         done += to_copy;
     }
 
     reader->bytes_read += done;
 
-    /* Return the number of complete elements to the caller */
     if (out_count)
     {
         *out_count = done / size;
@@ -1178,7 +1048,6 @@ esp_err_t ecu_reader_close(ecu_reader_t *reader)
 
     esp_err_t ret = ESP_OK;
 
-    /* Verify CRC only when the file was read completely */
     if (reader->bytes_read == reader->file_size)
     {
         uint32_t final_crc = ~reader->_crc_accum;
@@ -1216,12 +1085,7 @@ esp_err_t ecu_delete_firmware(ecu_manager_handle_t mgr, const char *ecu_name)
     for (uint8_t s = 0; s < ECU_MAX_SLOTS; s++)
     {
         ecu_slot_entry_t *sl = &m->sb.slots[s];
-        if (sl->status != ECU_SLOT_ACTIVE)
-        {
-            continue;
-        }
-
-        if (strncmp(sl->ecu_name, ecu_name, ECU_NAME_MAX_LEN) != 0)
+        if (sl->status != ECU_SLOT_ACTIVE || strncmp(sl->ecu_name, ecu_name, ECU_NAME_MAX_LEN) != 0)
         {
             continue;
         }
@@ -1230,10 +1094,7 @@ esp_err_t ecu_delete_firmware(ecu_manager_handle_t mgr, const char *ecu_name)
         erase_slot_blocks(m->nand, sl);
         MGR_LOCK(m);
 
-        memset(sl, 0, sizeof(ecu_slot_entry_t));
-        sl->status = ECU_SLOT_EMPTY;
-        sl->slot_id = s;
-        sl->magic = ECU_SLOT_MAGIC;
+        slot_reset_empty(sl, s);
         if (m->sb.num_slots > 0)
         {
             m->sb.num_slots--;
@@ -1259,7 +1120,6 @@ static bool verify_file_crc(ecu_manager_handle_t mgr, const char *ecu_name, ecu_
         return false;
     }
 
-    /* Read the file completely in 2 KB chunks */
     uint8_t *chunk = heap_caps_malloc(NAND_PAGE_SIZE, MALLOC_CAP_DMA);
     if (!chunk)
     {
@@ -1280,10 +1140,14 @@ static bool verify_file_crc(ecu_manager_handle_t mgr, const char *ecu_name, ecu_
         {
             break;
         }
+
+        if (ftype == ECU_FILE_PRM)
+        {
+            ESP_LOG_BUFFER_HEX_LEVEL(TAG, chunk, want, ESP_LOG_WARN);
+        }
     }
     free(chunk);
 
-    /* ecu_reader_close checks CRC */
     return (ecu_reader_close(&rd) == ESP_OK);
 }
 
@@ -1301,17 +1165,17 @@ esp_err_t ecu_verify_firmware(ecu_manager_handle_t mgr, const char *ecu_name, bo
 
     if (bin_ok)
     {
-        *bin_ok = (sl->bin_size > 0) ? verify_file_crc(mgr, ecu_name, ECU_FILE_BIN) : true;
+        *bin_ok = (file_slot_c(sl, ECU_FILE_BIN)->size > 0) ? verify_file_crc(mgr, ecu_name, ECU_FILE_BIN) : true;
     }
 
     if (prm_ok)
     {
-        *prm_ok = (sl->prm_size > 0) ? verify_file_crc(mgr, ecu_name, ECU_FILE_PRM) : true;
+        *prm_ok = (file_slot_c(sl, ECU_FILE_PRM)->size > 0) ? verify_file_crc(mgr, ecu_name, ECU_FILE_PRM) : true;
     }
 
     if (idx_ok)
     {
-        *idx_ok = (sl->idx_size > 0) ? verify_file_crc(mgr, ecu_name, ECU_FILE_IDX) : true;
+        *idx_ok = (file_slot_c(sl, ECU_FILE_IDX)->size > 0) ? verify_file_crc(mgr, ecu_name, ECU_FILE_IDX) : true;
     }
 
     return ESP_OK;
@@ -1319,16 +1183,20 @@ esp_err_t ecu_verify_firmware(ecu_manager_handle_t mgr, const char *ecu_name, bo
 
 static void slot_to_info(const ecu_slot_entry_t *sl, ecu_info_t *info)
 {
+    const ecu_file_slot_t *bin = file_slot_c(sl, ECU_FILE_BIN);
+    const ecu_file_slot_t *prm = file_slot_c(sl, ECU_FILE_PRM);
+    const ecu_file_slot_t *idx = file_slot_c(sl, ECU_FILE_IDX);
+
     info->slot_id = sl->slot_id;
     info->status = (ecu_slot_status_t) sl->status;
     info->hw_id = sl->hw_id;
-    info->bin_size = sl->bin_size;
-    info->prm_size = sl->prm_size;
-    info->idx_size = sl->idx_size;
+    info->bin_size = bin->size;
+    info->prm_size = prm->size;
+    info->idx_size = idx->size;
     info->timestamp_updated = sl->timestamp_updated;
-    info->has_bin = (sl->bin_num_blocks > 0 && sl->bin_size > 0);
-    info->has_prm = (sl->prm_num_blocks > 0 && sl->prm_size > 0);
-    info->has_idx = (sl->idx_num_blocks > 0 && sl->idx_size > 0);
+    info->has_bin = (bin->num_blocks > 0 && bin->size > 0);
+    info->has_prm = (prm->num_blocks > 0 && prm->size > 0);
+    info->has_idx = (idx->num_blocks > 0 && idx->size > 0);
     strlcpy(info->ecu_name, sl->ecu_name, ECU_NAME_MAX_LEN);
     strlcpy(info->fw_version, sl->fw_version, ECU_VERSION_MAX_LEN);
 }
@@ -1393,11 +1261,16 @@ esp_err_t ecu_get_active_slot_count(ecu_manager_handle_t mgr, uint8_t *count)
 
     struct ecu_mgr_t *m = mgr;
     uint8_t n = 0;
-    for (size_t s = 0; s < ECU_MAX_SLOTS; s++)
+    for (uint8_t s = 0; s < ECU_MAX_SLOTS; s++)
     {
-        m->sb.slots[s].status == ECU_SLOT_ACTIVE ? n++ : 0;
+        if (m->sb.slots[s].status == ECU_SLOT_ACTIVE)
+        {
+            // ESP_LOGD(TAG, "%s: %" PRId8, m->sb.slots[s].ecu_name, m->sb.slots[s].slot_id);
+            n++;
+        }
     }
     *count = n;
+    // ESP_LOGD(TAG, "ECU slots count %" PRId8, n);
     return ESP_OK;
 }
 
@@ -1424,7 +1297,10 @@ esp_err_t ecu_get_stats(ecu_manager_handle_t mgr, uint32_t *total_blocks, uint32
         const ecu_slot_entry_t *sl = &m->sb.slots[s];
         if (sl->status == ECU_SLOT_ACTIVE)
         {
-            used += sl->bin_num_blocks + sl->prm_num_blocks + sl->idx_num_blocks;
+            for (uint8_t f = 0; f < ECU_FILE_COUNT; f++)
+            {
+                used += sl->files[f].num_blocks;
+            }
         }
     }
 
@@ -1447,5 +1323,6 @@ esp_err_t ecu_get_stats(ecu_manager_handle_t mgr, uint32_t *total_blocks, uint32
     {
         *bad_blocks = bad;
     }
+
     return ESP_OK;
 }
