@@ -1,31 +1,11 @@
-menu "ECU Firmware NAND MX35 Manager Configuration"
+menu "NAND MX35 diskIO Manager Configuration"
     
-    menu "Run example"
-        choice
-            prompt"Run example for ecu NAND MX35 manager"
-            default RUN_ECU_FW_MANAGER_EXAMPLE
-            help
-                Select to run example for NAND MX35 device.
-
-            config RUN_ECU_FW_MANAGER_EXAMPLE
-                bool "Run ECU Firmware Manager example"
-            config RUN_NAND_MX35_EXAMPLE
-                bool "Run NAND MX35 example"
-        endchoice
-    endmenu
-
-    menu "Debug Options"
-        config EALIVE_NAND_MX35_DEBUG
-            bool "Enable debug for nand mx35"
-            default n
-            help
-                Enable debug messages for nand mx35 api.
-
-        config EALIVE_ECU_FW_MANAGER_DEBUG
-            bool "Enable debug for ecu firmware manager"
-            default n
-            help
-                Enable debug messages for ecu firmware manager.
-    endmenu
-
+    config NAND_MX35_PROTECTED_MODE
+        bool "Enable protected mode for NAND MX35"
+        default n
+        help
+            Enable protected mode for NAND MX35 device. In this mode, the NAND device 
+            is write-protected by default and must be unlocked before any write operation. 
+            This is useful to prevent accidental writes to the NAND device.
+            
 endmenu
