@@ -10,7 +10,7 @@
 // #define TEST_BLOCK 23U
 // #define TEST_PAGE  5U
 
-#define TEST_BLOCK 0U
+#define TEST_BLOCK 773U
 #define TEST_PAGE  0U
 
 #define NAND_SPI_HOST SPI2_HOST
@@ -31,7 +31,7 @@ static nand_handle_t handle;
 void app_main(void)
 {
     ESP_LOGI(TAG, "=== Testing NAND Driver ===");
-    esp_log_level_set("mx35lf1", ESP_LOG_DEBUG);
+    // esp_log_level_set("mx35lf1", ESP_LOG_DEBUG);
 
     spi_bus_config_t bus = {
         .mosi_io_num = NAND_PIN_MOSI,
@@ -78,6 +78,21 @@ void app_main(void)
     ESP_LOGI(TAG, "  Total capacity  : %" PRIu32 " MB data", (uint32_t) (NAND_TOTAL_SIZE / (1024UL * 1024UL)));
     ESP_LOGI(TAG, "  Internal ECC    : %s", info.ecc_enabled ? "ON" : "OFF");
     ESP_LOGI(TAG, "  Mounted         : %s", nand_mx35lf1_mounted(&handle) ? "ON" : "OFF");
+
+    // nand_mx35lf1_clear(&handle);
+    // for (int i = 0; i < NAND_BLOCKS_PER_LUN; i++)
+    // {
+    //     bool bad;
+    //     row_address_t row = {.block = i, .page = 0};
+    //     int ret = nand_mx35lf1_block_is_bad(&handle, row, &bad);
+    //     // if (ret != NAND_RET_OK)
+    //     // {
+    //     // nand_mx35lf1_block_mark_bad(&handle, row);
+    //     // bad = true;
+    //     // }
+    //     ESP_LOGI(TAG, "Block %d is bad? %s", i, bad ? "YES" : "NO");
+    // }
+    // return;
 
     row_address_t row = {.block = TEST_BLOCK, .page = TEST_PAGE};
     column_address_t column = 0;

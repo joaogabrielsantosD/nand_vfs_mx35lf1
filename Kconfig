@@ -1,5 +1,13 @@
 menu "NAND MX35 diskIO Manager Configuration"
-    
+
+    config VFS_NAND_MAX_OPENED_FILES
+        int "Maximum opened files for NAND VFS"
+        default 2
+        range 1 5
+        help
+            Maximum number of files that can be opened simultaneously on the
+            NAND Virtual File System (VFS).
+
     config NAND_MX35_PROTECTED_MODE
         bool "Enable protected mode for NAND MX35"
         default n
@@ -7,5 +15,5 @@ menu "NAND MX35 diskIO Manager Configuration"
             Enable protected mode for NAND MX35 device. In this mode, the NAND device 
             is write-protected by default and must be unlocked before any write operation. 
             This is useful to prevent accidental writes to the NAND device.
-            
+
 endmenu

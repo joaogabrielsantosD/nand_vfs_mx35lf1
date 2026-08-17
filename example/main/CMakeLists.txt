@@ -1,5 +1,6 @@
 set(src "")
-list(APPEND src "nand_driver_test.c")
+# list(APPEND src "nand_driver_test.c")
+list(APPEND src "nand_vfs_test_.c")
 
 idf_component_register(
     SRCS

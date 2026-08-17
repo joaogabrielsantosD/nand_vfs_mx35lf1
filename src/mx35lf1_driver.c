@@ -800,11 +800,12 @@ int nand_mx35lf1_clear(nand_handle_t *h)
     bool is_bad;
     for (int i = 0; i < NAND_BLOCKS_PER_LUN; i++)
     {
-        row_address_t row = {.block = 1, .page = 0};
+        ESP_LOGI(TAG, "Erase block : %d", i);
+        row_address_t row = {.block = i, .page = 0};
         int ret = nand_mx35lf1_block_is_bad(h, row, &is_bad);
         if (ret != NAND_RET_OK)
         {
-            return ret;
+            continue;
         }
 
         if (!is_bad)
@@ -812,9 +813,11 @@ int nand_mx35lf1_clear(nand_handle_t *h)
             int ret_ = nand_mx35lf1_block_erase(h, row);
             if (ret_ != NAND_RET_OK)
             {
-                return ret;
+                continue;
             }
         }
+
+        vTaskDelay(100);
     }
 
     return NAND_RET_OK;
