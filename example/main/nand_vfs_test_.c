@@ -356,6 +356,28 @@ static void test_file_with_dir()
     list_file_data(NAND_DIR_PATH_FILE);
 }
 
+static void test_file_with_fseek()
+{
+    char receive[sizeof(data)];
+    FILE *fr = fopen(NAND_TEST_FILE, "rb");
+    if (!fr)
+    {
+        ESP_LOGE(TAG, "Failed to open file %s", NAND_TEST_FILE);
+        return;
+    }
+
+    fseek(fr, 20, SEEK_SET);
+    size_t r = fread((uint8_t *) receive, 1, sizeof(data), fr);
+
+    if (fclose(fr) != 0)
+    {
+        ESP_LOGE(TAG, "Failed to close file (errno=%d msg=%s)", errno, strerror(errno));
+        return;
+    }
+    ESP_LOGD(TAG, "Read %u bytes from file: %s", (unsigned) r, NAND_TEST_FILE);
+    ESP_LOGD(TAG, "%s", receive);
+    list_file_data(NAND_TEST_FILE);
+}
 
 void app_main(void)
 {
@@ -414,6 +436,8 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to close file (errno=%d msg=%s)", errno, strerror(errno));
         return;
     }
+
+    test_file_with_fseek();
 
     ltfs_log_dir(NAND_PATH);
     test_file_without_dir();
