@@ -25,13 +25,14 @@
 typedef uint32_t dhara_sector_t;
 
 /* This sector value is reserved */
-#define DHARA_SECTOR_NONE	0xffffffff
+#define DHARA_SECTOR_NONE 0xffffffff
 
-struct dhara_map {
-	struct dhara_journal	journal;
+struct dhara_map
+{
+    struct dhara_journal journal;
 
-	uint8_t			gc_ratio;
-	dhara_sector_t		count;
+    uint8_t gc_ratio;
+    dhara_sector_t count;
 };
 
 /* Initialize a map. You need to supply a buffer for page metadata, and
@@ -42,8 +43,7 @@ struct dhara_map {
  * expense of capacity. You should always initialize the same chip with
  * the same garbage collection ratio.
  */
-void dhara_map_init(struct dhara_map *m, const struct dhara_nand *n,
-		    uint8_t *page_buf, uint8_t gc_ratio);
+void dhara_map_init(struct dhara_map *m, const struct dhara_nand *n, uint8_t *page_buf, uint8_t gc_ratio);
 
 /* Recover stored state, if possible. If there is no valid stored state
  * on the chip, -1 is returned, and an empty map is initialized.
@@ -59,35 +59,30 @@ dhara_sector_t dhara_map_capacity(const struct dhara_map *m);
 /* Obtain the current number of allocated sectors. */
 static inline dhara_sector_t dhara_map_size(const struct dhara_map *m)
 {
-	return m->count;
+    return m->count;
 }
 
 /* Find the physical page which holds the current data for this sector.
  * Returns 0 on success or -1 if an error occurs. If the sector doesn't
  * exist, the error is E_NOT_FOUND.
  */
-int dhara_map_find(struct dhara_map *m, dhara_sector_t s,
-		   dhara_page_t *loc, dhara_error_t *err);
+int dhara_map_find(struct dhara_map *m, dhara_sector_t s, dhara_page_t *loc, dhara_error_t *err);
 
 /* Read from the given logical sector. If the sector is unmapped, a
  * blank page (0xff) will be returned.
  */
-int dhara_map_read(struct dhara_map *m, dhara_sector_t s,
-		   uint8_t *data, dhara_error_t *err);
+int dhara_map_read(struct dhara_map *m, dhara_sector_t s, uint8_t *data, dhara_error_t *err);
 
 /* Write data to a logical sector. */
-int dhara_map_write(struct dhara_map *m, dhara_sector_t s,
-		    const uint8_t *data, dhara_error_t *err);
+int dhara_map_write(struct dhara_map *m, dhara_sector_t s, const uint8_t *data, dhara_error_t *err);
 
 /* Copy any flash page to a logical sector. */
-int dhara_map_copy_page(struct dhara_map *m, dhara_page_t src,
-			dhara_sector_t dst, dhara_error_t *err);
+int dhara_map_copy_page(struct dhara_map *m, dhara_page_t src, dhara_sector_t dst, dhara_error_t *err);
 
 /* Copy one sector to another. If the source sector is unmapped, the
  * destination sector will be trimmed.
  */
-int dhara_map_copy_sector(struct dhara_map *m, dhara_sector_t src,
-			  dhara_sector_t dst, dhara_error_t *err);
+int dhara_map_copy_sector(struct dhara_map *m, dhara_sector_t src, dhara_sector_t dst, dhara_error_t *err);
 
 /* Delete a logical sector. You don't necessarily need to do this, but
  * it's a useful hint if you no longer require the sector's data to be
@@ -96,8 +91,7 @@ int dhara_map_copy_sector(struct dhara_map *m, dhara_sector_t src,
  * If order is non-zero, it specifies that all sectors in the
  * (2**order)-aligned group of s are to be deleted.
  */
-int dhara_map_trim(struct dhara_map *m, dhara_sector_t s,
-		   dhara_error_t *err);
+int dhara_map_trim(struct dhara_map *m, dhara_sector_t s, dhara_error_t *err);
 
 /* Synchronize the map. Once this returns successfully, all changes to
  * date are persistent and durable. Conversely, there is no guarantee

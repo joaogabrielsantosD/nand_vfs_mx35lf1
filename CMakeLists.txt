@@ -3,13 +3,13 @@ idf_component_register(
         "src/mx35lf1_driver.c"
         # "src/nand_diskio.c"
         # "src/nand_vfs.c"
-        # "src/dhara/dhara/error.c"
-        # "src/dhara/dhara/journal.c"
-        # "src/dhara/dhara/map.c"
-        # "src/dhara/dhara/nand.c"
+        "src/dhara/dhara/error.c"
+        "src/dhara/dhara/journal.c"
+        "src/dhara/dhara/map.c"
+        "src/dhara/dhara/nand.c"
     INCLUDE_DIRS
         "include"
-        # "src/dhara/dhara"
+        "src/dhara/dhara"
     REQUIRES
         driver
         esp_timer
