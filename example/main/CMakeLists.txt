@@ -1,10 +1,6 @@
 set(src "")
-
-if(CONFIG_RUN_NAND_MX35_EXAMPLE)
-    list(APPEND src "nand_mx35_example.c")
-else()
-    list(APPEND src "ecu_fw_manager_example.c")
-endif()
+# list(APPEND src "nand_driver_test.c")
+list(APPEND src "nand_vfs_test_.c")
 
 idf_component_register(
     SRCS
