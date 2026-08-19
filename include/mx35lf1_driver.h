@@ -103,13 +103,7 @@ typedef struct
 {
     spi_host_device_t spi_host; /**< SPI peripheral: SPI2_HOST or SPI3_HOST   */
     int pin_cs;                 /**< Chip-Select GPIO (active LOW)            */
-    int pin_mosi;               /**< MOSI / SIO0                              */
-    int pin_miso;               /**< MISO / SIO1                              */
-    int pin_sclk;               /**< Serial clock                             */
-    int pin_wp;                 /**< WP# / SIO2  (-1 if unused)              */
-    int pin_hold;               /**< HOLD# / SIO3 (-1 if unused)             */
     int clock_speed_hz;         /**< SPI clock frequency in Hz (≤ 104 MHz) */
-    int dma_chan;               /**< DMA channel — use SPI_DMA_CH_AUTO        */
     bool disable_ecc;           /**< True to disable the ECC feature, false otherwise */
 } nand_config_t;
 

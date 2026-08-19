@@ -55,13 +55,7 @@ static bool test_init(void)
     nand_config_t cfg = {
         .spi_host = NAND_SPI_HOST,
         .pin_cs = NAND_PIN_CS,
-        .pin_mosi = NAND_PIN_MOSI,
-        .pin_miso = NAND_PIN_MISO,
-        .pin_sclk = NAND_PIN_SCLK,
-        .pin_wp = NAND_PIN_WP,
-        .pin_hold = NAND_PIN_HOLD,
         .clock_speed_hz = NAND_CLOCK_HZ,
-        .dma_chan = SPI_DMA_CH_AUTO,
         .disable_ecc = false,
     };
 
