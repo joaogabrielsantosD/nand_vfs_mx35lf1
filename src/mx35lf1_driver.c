@@ -7,7 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
-#include "string.h"
+#include <string.h>
 
 #define ECC_STATUS_NO_ERR        0b00
 #define ECC_STATUS_1_4_CORRECTED 0b01
@@ -29,6 +29,16 @@
             ESP_LOGE(TAG, "NULL argument"); \
             return NAND_RET_E_INVALID_ARG;  \
         }                                   \
+    } while (0)
+
+#define NAND_CHECK_HANDLE(p)                  \
+    do                                        \
+    {                                         \
+        if (!((p)->initialized))              \
+        {                                     \
+            ESP_LOGE(TAG, "Not initialized"); \
+            return NAND_RET_E_INVALID_ARG;    \
+        }                                     \
     } while (0)
 
 typedef union
@@ -77,7 +87,7 @@ typedef union
 
 static const char TAG[] = "mx35lf1";
 
-/* ------------------ Private section ------------------ */
+/* ------------------ SPI functions section ------------------ */
 
 static int spi_xfer(nand_handle_t *h, const uint8_t *tx, uint8_t *rx, size_t len)
 {
@@ -102,6 +112,8 @@ static inline int spi_write(nand_handle_t *h, const uint8_t *tx, size_t len)
 {
     return spi_xfer(h, tx, NULL, len);
 }
+
+/* ------------------ Private section ------------------ */
 
 static bool validate_row_address(row_address_t row)
 {
@@ -257,6 +269,37 @@ static int lock_all_blocks(nand_handle_t *h)
     return ret;
 }
 
+static int nand_write_protect(nand_handle_t *h)
+{
+    int ret = write_disable(h);
+    if (ret != NAND_RET_OK)
+    {
+        ESP_LOGE(TAG, "Error to disable the WEL bit");
+        return ret;
+    }
+
+    ret = lock_all_blocks(h);
+    if (ret != NAND_RET_OK)
+    {
+        ESP_LOGE(TAG, "Error to set the block protection data");
+        return ret;
+    }
+
+    return NAND_RET_OK;
+}
+
+static int nand_write_unprotect(nand_handle_t *h)
+{
+    int ret = unlock_all_blocks(h);
+    if (ret != NAND_RET_OK)
+    {
+        ESP_LOGE(TAG, "Error to unlock all blocks");
+        return ret;
+    }
+
+    return NAND_RET_OK;
+}
+
 #endif
 
 static int enable_ecc(nand_handle_t *h)
@@ -292,7 +335,7 @@ static int nand_read_id(nand_handle_t *h, uint8_t *manufacturer_out, uint8_t *de
         return NAND_RET_BAD_SPI;
     }
 
-    if ((rx_data[2] != NAND_MANUFACTURER_ID) && (rx_data[3] != NAND_DEVICE_ID))
+    if ((rx_data[2] != NAND_MANUFACTURER_ID) || (rx_data[3] != NAND_DEVICE_ID))
     {
         return NAND_RET_DEVICE_ID;
     }
@@ -463,14 +506,14 @@ int nand_mx35lf1_init(nand_handle_t *h, const nand_config_t *cfg)
         return ret;
     }
 
-    vTaskDelay(NAND_TIMEOUT_RESET_MS);
+    vTaskDelay(pdMS_TO_TICKS(NAND_TIMEOUT_RESET_MS));
     ret = nand_reset(h);
     if (ret != NAND_RET_OK)
     {
         ESP_LOGE(TAG, "Error to reset the flash");
         return ret;
     }
-    vTaskDelay(NAND_TIMEOUT_RESET_MS);
+    vTaskDelay(pdMS_TO_TICKS(NAND_TIMEOUT_RESET_MS));
 
     uint8_t manufacturer, device;
     ret = nand_read_id(h, &manufacturer, &device);
@@ -481,16 +524,9 @@ int nand_mx35lf1_init(nand_handle_t *h, const nand_config_t *cfg)
     }
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = write_disable(h);
-    if (ret != NAND_RET_OK)
-    {
-        ESP_LOGE(TAG, "Error to disable the WEL bit");
-        return ret;
-    }
-
-    ret = lock_all_blocks(h);
+    ret = nand_write_protect(h);
 #else
-    ret = unlock_all_blocks(h);
+    ret = nand_write_unprotect(h);
 #endif
     if (ret != NAND_RET_OK)
     {
@@ -522,9 +558,20 @@ int nand_mx35lf1_init(nand_handle_t *h, const nand_config_t *cfg)
     return ret;
 }
 
+int nand_mx35lf1_deinit(nand_handle_t *h)
+{
+    NAND_CHECK_ARG(h);
+    NAND_CHECK_HANDLE(h);
+    spi_bus_remove_device(h->spi);
+    memset(&h->info, 0, sizeof(nand_info_t));
+    h->initialized = false;
+    return NAND_RET_OK;
+}
+
 int nand_mx35lf1_page_program(nand_handle_t *h, row_address_t row, column_address_t column, const uint8_t *data_in, size_t write_len)
 {
     NAND_CHECK_ARG(h);
+    NAND_CHECK_HANDLE(h);
     NAND_CHECK_ARG(data_in);
 
     if (!validate_row_address(row) || !validate_column_address(column))
@@ -543,10 +590,10 @@ int nand_mx35lf1_page_program(nand_handle_t *h, row_address_t row, column_addres
     int ret = NAND_RET_OK;
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = unlock_all_blocks(h);
+    ret = nand_write_unprotect(h);
     if (ret != NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error to unlock all blocks");
+        ESP_LOGE(TAG, "Failed to write unprotected");
         return ret;
     }
 #endif
@@ -573,17 +620,10 @@ int nand_mx35lf1_page_program(nand_handle_t *h, row_address_t row, column_addres
     }
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = write_disable(h);
+    ret = nand_write_protect(h);
     if (ret != NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error to disable the WEL bit");
-        return ret;
-    }
-
-    ret = lock_all_blocks(h);
-    if (ret != NAND_RET_OK)
-    {
-        ESP_LOGE(TAG, "Error to set the block protection data");
+        ESP_LOGE(TAG, "failed to set the write protection");
         return ret;
     }
 #endif
@@ -595,6 +635,7 @@ int nand_mx35lf1_page_program(nand_handle_t *h, row_address_t row, column_addres
 int nand_mx35lf1_page_read(nand_handle_t *h, row_address_t row, column_address_t column, uint8_t *data_out, size_t read_len)
 {
     NAND_CHECK_ARG(h);
+    NAND_CHECK_HANDLE(h);
     NAND_CHECK_ARG(data_out);
 
     if (!validate_row_address(row) || !validate_column_address(column))
@@ -624,6 +665,7 @@ int nand_mx35lf1_page_read(nand_handle_t *h, row_address_t row, column_address_t
 int nand_mx35lf1_page_copy(nand_handle_t *h, row_address_t src, row_address_t dst)
 {
     NAND_CHECK_ARG(h);
+    NAND_CHECK_HANDLE(h);
 
     if (!validate_row_address(src) || !validate_row_address(dst))
     {
@@ -638,10 +680,10 @@ int nand_mx35lf1_page_copy(nand_handle_t *h, row_address_t src, row_address_t ds
     }
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = unlock_all_blocks(h);
+    ret = nand_write_unprotect(h);
     if (ret != NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error to unlock all blocks");
+        ESP_LOGE(TAG, "Failed to write unprotected");
         return ret;
     }
 #endif
@@ -661,17 +703,10 @@ int nand_mx35lf1_page_copy(nand_handle_t *h, row_address_t src, row_address_t ds
     }
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = write_disable(h);
+    ret = nand_write_protect(h);
     if (ret != NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error to disable the WEL bit");
-        return ret;
-    }
-
-    ret = lock_all_blocks(h);
-    if (ret != NAND_RET_OK)
-    {
-        ESP_LOGE(TAG, "Error to set the block protection data");
+        ESP_LOGE(TAG, "failed to set the write protection");
         return ret;
     }
 #endif
@@ -683,6 +718,7 @@ int nand_mx35lf1_page_copy(nand_handle_t *h, row_address_t src, row_address_t ds
 int nand_mx35lf1_block_erase(nand_handle_t *h, row_address_t row)
 {
     NAND_CHECK_ARG(h);
+    NAND_CHECK_HANDLE(h);
     row.page = 0;  // make sure page address is zero
 
     if (!validate_row_address(row))
@@ -693,10 +729,10 @@ int nand_mx35lf1_block_erase(nand_handle_t *h, row_address_t row)
     int ret = NAND_RET_OK;
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = unlock_all_blocks(h);
+    ret = nand_write_unprotect(h);
     if (ret != NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error to unlock all blocks");
+        ESP_LOGE(TAG, "Failed to write unprotected");
         return ret;
     }
 #endif
@@ -716,17 +752,10 @@ int nand_mx35lf1_block_erase(nand_handle_t *h, row_address_t row)
     }
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = write_disable(h);
+    ret = nand_write_protect(h);
     if (ret != NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error to disable the WEL bit");
-        return ret;
-    }
-
-    ret = lock_all_blocks(h);
-    if (ret != NAND_RET_OK)
-    {
-        ESP_LOGE(TAG, "Error to set the block protection data");
+        ESP_LOGE(TAG, "failed to set the write protection");
         return ret;
     }
 #endif
@@ -738,6 +767,7 @@ int nand_mx35lf1_block_erase(nand_handle_t *h, row_address_t row)
 int nand_mx35lf1_block_is_bad(nand_handle_t *h, row_address_t row, bool *is_bad)
 {
     NAND_CHECK_ARG(h);
+    NAND_CHECK_HANDLE(h);
     NAND_CHECK_ARG(is_bad);
     uint8_t bad_block_mark[2];
 
@@ -755,6 +785,7 @@ int nand_mx35lf1_block_is_bad(nand_handle_t *h, row_address_t row, bool *is_bad)
 int nand_mx35lf1_block_mark_bad(nand_handle_t *h, row_address_t row)
 {
     NAND_CHECK_ARG(h);
+    NAND_CHECK_HANDLE(h);
     uint8_t bad_block_mark[2] = {BAD_BLOCK_MARK, BAD_BLOCK_MARK};
     return nand_mx35lf1_page_program(h, row, NAND_PAGE_SIZE, bad_block_mark, sizeof(bad_block_mark));
 }
@@ -762,6 +793,7 @@ int nand_mx35lf1_block_mark_bad(nand_handle_t *h, row_address_t row)
 int nand_mx35lf1_page_is_free(nand_handle_t *h, row_address_t row, bool *is_free)
 {
     NAND_CHECK_ARG(h);
+    NAND_CHECK_HANDLE(h);
     NAND_CHECK_ARG(is_free);
 
     size_t alloc_len = NAND_PAGE_FULL_SIZE;
@@ -775,6 +807,7 @@ int nand_mx35lf1_page_is_free(nand_handle_t *h, row_address_t row, bool *is_free
     int ret = nand_mx35lf1_page_read(h, row, 0, page_main_and_oob_buffer, alloc_len);
     if (ret != NAND_RET_OK)
     {
+        free(page_main_and_oob_buffer);
         return ret;
     }
 
@@ -789,6 +822,7 @@ int nand_mx35lf1_page_is_free(nand_handle_t *h, row_address_t row, bool *is_free
         }
     }
 
+    free(page_main_and_oob_buffer);
     ESP_LOGD(TAG, "Nand is free passed");
     return NAND_RET_OK;
 }
@@ -796,6 +830,7 @@ int nand_mx35lf1_page_is_free(nand_handle_t *h, row_address_t row, bool *is_free
 int nand_mx35lf1_clear(nand_handle_t *h)
 {
     NAND_CHECK_ARG(h);
+    NAND_CHECK_HANDLE(h);
 
     bool is_bad;
     for (int i = 0; i < NAND_BLOCKS_PER_LUN; i++)
@@ -805,6 +840,7 @@ int nand_mx35lf1_clear(nand_handle_t *h)
         int ret = nand_mx35lf1_block_is_bad(h, row, &is_bad);
         if (ret != NAND_RET_OK)
         {
+            // return ret;
             continue;
         }
 
@@ -813,11 +849,12 @@ int nand_mx35lf1_clear(nand_handle_t *h)
             int ret_ = nand_mx35lf1_block_erase(h, row);
             if (ret_ != NAND_RET_OK)
             {
+                // return ret;
                 continue;
             }
         }
 
-        vTaskDelay(100);
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     return NAND_RET_OK;

@@ -37,7 +37,7 @@ int dhara_nand_erase(const struct dhara_nand *n, dhara_block_t b, dhara_error_t 
         return 0;  // sucess
     }
 
-    else if (ret == NAND_RET_E_FAIL)
+    if (ret == NAND_RET_E_FAIL)
     {
         dhara_set_error(err, DHARA_E_BAD_BLOCK);
         return -1;
@@ -57,7 +57,7 @@ int dhara_nand_prog(const struct dhara_nand *n, dhara_page_t p, const uint8_t *d
         return 0;  // sucess
     }
 
-    else if (ret == NAND_RET_P_FAIL)
+    if (ret == NAND_RET_P_FAIL)
     {
         dhara_set_error(err, DHARA_E_BAD_BLOCK);
         return -1;
@@ -92,7 +92,7 @@ int dhara_nand_read(const struct dhara_nand *n, dhara_page_t p, size_t offset, s
         return 0;  // sucess
     }
 
-    else if (ret == NAND_RET_ECC_ERR)
+    if (ret == NAND_RET_ECC_ERR)
     {
         dhara_set_error(err, DHARA_E_ECC);  // ECC failure
         return -1;
@@ -105,21 +105,21 @@ int dhara_nand_copy(const struct dhara_nand *n, dhara_page_t src, dhara_page_t d
 {
     nand_handle_t *h = diskio_nand_get_handle();
     row_address_t source = {.whole = src};
-    row_address_t destni = {.whole = dst};
+    row_address_t destination = {.whole = dst};
 
-    int ret = nand_mx35lf1_page_copy(h, source, destni);
+    int ret = nand_mx35lf1_page_copy(h, source, destination);
     if (ret == NAND_RET_OK)
     {
         return 0;
     }
 
-    else if (ret == NAND_RET_ECC_ERR)
+    if (ret == NAND_RET_ECC_ERR)
     {
         dhara_set_error(err, DHARA_E_ECC);
         return -1;
     }
 
-    else if (ret == NAND_RET_P_FAIL)
+    if (ret == NAND_RET_P_FAIL)
     {
         dhara_set_error(err, DHARA_E_BAD_BLOCK);
         return -1;

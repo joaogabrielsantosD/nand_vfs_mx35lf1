@@ -1,8 +1,10 @@
-#include "../include/nand_diskio.h"
+#include "nand_diskio.h"
 
 #include "dhara/dhara/map.h"
 #include "driver/spi_master.h"
 #include <esp_log.h>
+
+#define DHARA_GC_RATIO 5
 
 static const char TAG[] = "diskio";
 static struct dhara_map map;
@@ -24,13 +26,17 @@ static DSTATUS disk_initialize_dhara(BYTE pdrv)
         return 0;
     }
 
-    nand_mx35lf1_init(&handle, &config);
+    if (nand_mx35lf1_init(&handle, &config) != NAND_RET_OK)
+    {
+        ESP_LOGE(TAG, "Failed to init the nand driver");
+        return STA_NOINIT;
+    }
 
     nand.log2_page_size = NAND_LOG2_PAGE_SIZE;  // Assume 2048 (2^11)
     nand.log2_ppb = NAND_LOG2_PAGES_PER_BLOCK;  // Assume 64 (2^6)
     nand.num_blocks = NAND_BLOCKS_PER_LUN;
 
-    dhara_map_init(&map, &nand, dhara_buffer, 5);
+    dhara_map_init(&map, &nand, dhara_buffer, DHARA_GC_RATIO);
     dhara_error_t err = DHARA_E_NONE;
     if (dhara_map_resume(&map, &err) != 0)
     {
@@ -56,7 +62,7 @@ static DRESULT disk_read_dhara(unsigned char pdrv, unsigned char *buff, uint32_t
 {
     if (pdrv != PDRV_NAND_FTL)
     {
-        return STA_NODISK;
+        return RES_PARERR;
     }
 
     dhara_error_t err = DHARA_E_NONE;
@@ -79,7 +85,7 @@ static DRESULT disk_write_dhara(unsigned char pdrv, const unsigned char *buff, u
 {
     if (pdrv != PDRV_NAND_FTL)
     {
-        return STA_NODISK;
+        return RES_PARERR;
     }
 
     dhara_error_t err = DHARA_E_NONE;
@@ -102,7 +108,7 @@ static DRESULT disk_ioctl_dhara(unsigned char pdrv, unsigned char cmd, void *buf
 {
     if (pdrv != PDRV_NAND_FTL)
     {
-        return STA_NODISK;
+        return RES_PARERR;
     }
 
     dhara_error_t err = DHARA_E_NONE;

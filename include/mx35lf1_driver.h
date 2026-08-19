@@ -123,7 +123,7 @@ typedef union
         uint32_t page : 6;
 
         /// @brief valid range 0-1023
-        uint32_t block : 26;
+        uint32_t block : 26;  // complete the 32 bits (6 + 26 == 32)
     };
 } row_address_t;
 
@@ -139,6 +139,7 @@ typedef struct nand_dev_t
 } nand_handle_t;
 
 int nand_mx35lf1_init(nand_handle_t *h, const nand_config_t *cfg);
+int nand_mx35lf1_deinit(nand_handle_t *h);
 int nand_mx35lf1_page_program(nand_handle_t *h, row_address_t row, column_address_t column, const uint8_t *data_in, size_t write_len);
 int nand_mx35lf1_page_read(nand_handle_t *h, row_address_t row, column_address_t column, uint8_t *data_out, size_t read_len);
 int nand_mx35lf1_page_copy(nand_handle_t *h, row_address_t src, row_address_t dst);
