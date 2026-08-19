@@ -10,11 +10,11 @@
 #define NAND_PATH          "/nand"
 #define NAND_DIR_PATH      "/nand/app/"
 #define NAND_DIR_PATH_FILE "/nand/app/firm.txt"
-#define NAND_TEST_FILE     "/nand/teste.txt"
+#define NAND_TEST_FILE     "/nand/test.txt"
 #define NAND_TEST_OLD_FILE "/nand/old.txt"
 #define NAND_TEST_NEW_FILE "/nand/new.txt"
 
-const char data[] = "Teste de escrita na memoria nand usando posix function em C para usar no eOTA 3.0";
+const char data[] = "Write test on nand memory using POSIX functions in C";
 
 #define MAX_LTFS_PATH_LEN 256
 
@@ -25,9 +25,13 @@ const char data[] = "Teste de escrita na memoria nand usando posix function em C
 #define NAND_PIN_CS   15
 #define NAND_PIN_WP   16                 /* -1 if not connected */
 #define NAND_PIN_HOLD 17                 /* -1 if not connected */
-#define NAND_CLOCK_HZ (50 * 1000 * 1000) /* 40 MHz — conservative */
+#define NAND_CLOCK_HZ (50 * 1000 * 1000) /* 50 MHz — conservative */
 
 static const char TAG[] = "NAND_VFS";
+
+/* ------------------------------------------------------------------------ */
+/* Path helpers                                                              */
+/* ------------------------------------------------------------------------ */
 
 /**
  * @brief Copies @p src into @p dst as a path buffer initializer.
@@ -84,7 +88,7 @@ static void path_normalize(char *path, size_t size)
     memcpy(tmp, path, in_len + 1);
 
     // Stack of segment pointers (into tmp).
-    const size_t max_segments = MAX_LTFS_PATH_LEN / 2 + 1;  // safe upper bound ( worst case is 2 char segments like '/a/a/a.../')
+    const size_t max_segments = MAX_LTFS_PATH_LEN / 2 + 1;  // safe upper bound (worst case is 2 char segments like '/a/a/a.../')
     const char *segments[max_segments];
     size_t seg_count = 0;
 
@@ -184,7 +188,7 @@ static void path_normalize(char *path, size_t size)
 
 /**
  * @brief Appends a path to @p base, normalizing.
- * 
+ *
  * Do not use with base URLs (http://<something>.com/) as it will break them.
  *
  * @param[out] base       Base path segment.
@@ -217,6 +221,10 @@ static bool path_join(char *base, size_t base_size, const char *append)
 
     return true;
 }
+
+/* ------------------------------------------------------------------------ */
+/* Test helpers                                                              */
+/* ------------------------------------------------------------------------ */
 
 static void ltfs_log_dir(const char *full_path)
 {
@@ -265,98 +273,86 @@ static void ltfs_log_dir(const char *full_path)
 static void list_file_data(const char *full_path)
 {
     struct stat st;
-    stat(NAND_TEST_FILE, &st);
     if (stat(full_path, &st) != 0)
     {
-        ESP_LOGE(TAG, "Failed to stat file: %s", NAND_TEST_FILE);
+        ESP_LOGE(TAG, "Failed to stat file: %s", full_path);
         return;
     }
     ESP_LOGW(TAG, "File size=%d - exist=%s", (int) st.st_size, S_ISREG(st.st_mode) ? "YES" : "NO");
 }
 
-static void test_file_without_dir()
+static bool write_file(const char *path)
 {
-    FILE *f = fopen(NAND_TEST_FILE, "wb");
+    FILE *f = fopen(path, "wb");
     if (!f)
     {
-        ESP_LOGE(TAG, "Failed to open file %s", NAND_TEST_FILE);
-        return;
+        ESP_LOGE(TAG, "Failed to open file %s", path);
+        return false;
     }
 
     size_t w = fwrite((uint8_t *) data, 1, sizeof(data), f);
     if (w != sizeof(data))
     {
         ESP_LOGE(TAG, "Failed to write to file.");
-        return;
+        fclose(f);
+        return false;
     }
 
     if (fclose(f) != 0)
     {
         ESP_LOGE(TAG, "Failed to close file (errno=%d msg=%s)", errno, strerror(errno));
-        return;
+        return false;
     }
 
-    char receive[sizeof(data)];
-    FILE *fr = fopen(NAND_TEST_FILE, "rb");
-    if (!fr)
-    {
-        ESP_LOGE(TAG, "Failed to open file %s", NAND_TEST_FILE);
-        return;
-    }
-    size_t r = fread((uint8_t *) receive, 1, sizeof(data), f);
-
-    if (fclose(f) != 0)
-    {
-        ESP_LOGE(TAG, "Failed to close file (errno=%d msg=%s)", errno, strerror(errno));
-        return;
-    }
-    ESP_LOGD(TAG, "Read %u bytes from file: %s", (unsigned) r, NAND_TEST_FILE);
-    ESP_LOGD(TAG, "%s", receive);
-    list_file_data(NAND_TEST_FILE);
+    return true;
 }
 
-static void test_file_with_dir()
+static bool read_file(const char *path, char *buffer, size_t size)
 {
-    FILE *f = fopen(NAND_DIR_PATH_FILE, "wb");
+    FILE *f = fopen(path, "rb");
     if (!f)
     {
-        ESP_LOGE(TAG, "Failed to open file %s", NAND_DIR_PATH_FILE);
-        return;
+        ESP_LOGE(TAG, "Failed to open file %s", path);
+        return false;
     }
 
-    size_t w = fwrite((uint8_t *) data, 1, sizeof(data), f);
-    if (w != sizeof(data))
-    {
-        ESP_LOGE(TAG, "Failed to write to file.");
-        return;
-    }
+    size_t r = fread((uint8_t *) buffer, 1, size, f);
 
     if (fclose(f) != 0)
     {
         ESP_LOGE(TAG, "Failed to close file (errno=%d msg=%s)", errno, strerror(errno));
+        return false;
+    }
+
+    ESP_LOGD(TAG, "Read %u bytes from file: %s", (unsigned) r, path);
+    ESP_LOGD(TAG, "%s", buffer);
+    list_file_data(path);
+    return true;
+}
+
+static void test_file_without_dir(void)
+{
+    if (!write_file(NAND_TEST_FILE))
+    {
         return;
     }
 
     char receive[sizeof(data)];
-    FILE *fr = fopen(NAND_DIR_PATH_FILE, "rb");
-    if (!fr)
-    {
-        ESP_LOGE(TAG, "Failed to open file %s", NAND_DIR_PATH_FILE);
-        return;
-    }
-    size_t r = fread((uint8_t *) receive, 1, sizeof(data), f);
-
-    if (fclose(f) != 0)
-    {
-        ESP_LOGE(TAG, "Failed to close file (errno=%d msg=%s)", errno, strerror(errno));
-        return;
-    }
-    ESP_LOGD(TAG, "Read %u bytes from file: %s", (unsigned) r, NAND_DIR_PATH_FILE);
-    ESP_LOGD(TAG, "%s", receive);
-    list_file_data(NAND_DIR_PATH_FILE);
+    read_file(NAND_TEST_FILE, receive, sizeof(receive));
 }
 
-static void test_file_with_fseek()
+static void test_file_with_dir(void)
+{
+    if (!write_file(NAND_DIR_PATH_FILE))
+    {
+        return;
+    }
+
+    char receive[sizeof(data)];
+    read_file(NAND_DIR_PATH_FILE, receive, sizeof(receive));
+}
+
+static void test_file_with_fseek(void)
 {
     char receive[sizeof(data)];
     FILE *fr = fopen(NAND_TEST_FILE, "rb");
@@ -366,8 +362,8 @@ static void test_file_with_fseek()
         return;
     }
 
-    fseek(fr, 20, SEEK_SET);
-    size_t r = fread((uint8_t *) receive, 1, sizeof(data), fr);
+    fseek(fr, 19, SEEK_SET);
+    size_t r = fread((uint8_t *) receive, 1, sizeof(receive), fr);
 
     if (fclose(fr) != 0)
     {
@@ -379,11 +375,8 @@ static void test_file_with_fseek()
     list_file_data(NAND_TEST_FILE);
 }
 
-void app_main(void)
+static bool test_mount(void)
 {
-    // esp_log_level_set("mx35lf1", ESP_LOG_DEBUG);
-    esp_log_level_set(TAG, ESP_LOG_DEBUG);
-
     spi_bus_config_t bus = {
         .mosi_io_num = NAND_PIN_MOSI,
         .miso_io_num = NAND_PIN_MISO,
@@ -393,7 +386,6 @@ void app_main(void)
         .max_transfer_sz = NAND_SPI_MAX_TRANSFER,
         .flags = SPICOMMON_BUSFLAG_MASTER,
     };
-
     spi_bus_initialize(NAND_SPI_HOST, &bus, SPI_DMA_CH_AUTO);
 
     nand_config_t cfg = {
@@ -411,44 +403,26 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Mount vfs nand");
     bool ok = mount_vfs_nand(NAND_PATH, &cfg) == ESP_OK;
-    ESP_LOGI(TAG, "%s", ok ? "Mounted sucess" : "Mounted error");
-    if (!ok)
-    {
-        return;
-    }
+    ESP_LOGI(TAG, "%s", ok ? "Mounted success" : "Mounted error");
+    return ok;
+}
 
-    FILE *f = fopen(NAND_TEST_OLD_FILE, "wb");
-    if (!f)
-    {
-        ESP_LOGE(TAG, "Failed to open file %s", NAND_TEST_OLD_FILE);
-        return;
-    }
-
-    size_t w = fwrite((uint8_t *) data, 1, sizeof(data), f);
-    if (w != sizeof(data))
-    {
-        ESP_LOGE(TAG, "Failed to write to file.");
-        return;
-    }
-
-    if (fclose(f) != 0)
-    {
-        ESP_LOGE(TAG, "Failed to close file (errno=%d msg=%s)", errno, strerror(errno));
-        return;
-    }
-
-    test_file_with_fseek();
-
+static void test_rename_and_unlink(void)
+{
     ltfs_log_dir(NAND_PATH);
     test_file_without_dir();
     rename(NAND_TEST_OLD_FILE, NAND_TEST_NEW_FILE);
     ltfs_log_dir(NAND_PATH);
     unlink(NAND_TEST_NEW_FILE);
     ltfs_log_dir(NAND_PATH);
+}
 
+static void test_mkdir_and_file(void)
+{
     mkdir(NAND_DIR_PATH, 0777);
     ltfs_log_dir(NAND_DIR_PATH);
     test_file_with_dir();
+
     struct stat st;
     if (stat(NAND_DIR_PATH, &st) != 0)
     {
@@ -457,7 +431,30 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "%s is dir? %s", NAND_DIR_PATH, S_ISDIR(st.st_mode) ? "YES" : "NO");
     ltfs_log_dir(NAND_DIR_PATH);
+}
 
+/* ------------------------------------------------------------------------ */
+/* Entry point                                                               */
+/* ------------------------------------------------------------------------ */
+
+void app_main(void)
+{
+    // esp_log_level_set("mx35lf1", ESP_LOG_DEBUG);
+    esp_log_level_set(TAG, ESP_LOG_DEBUG);
+
+    if (!test_mount())
+    {
+        return;
+    }
+
+    if (!write_file(NAND_TEST_OLD_FILE))
+    {
+        return;
+    }
+
+    test_file_with_fseek();
+    test_rename_and_unlink();
+    test_mkdir_and_file();
 
     ESP_LOGI(TAG, "Unmount vfs nand");
     unmount_vfs_nand();

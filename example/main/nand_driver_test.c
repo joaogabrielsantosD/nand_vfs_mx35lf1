@@ -20,19 +20,27 @@
 #define NAND_PIN_CS   15
 #define NAND_PIN_WP   16                 /* -1 if not connected */
 #define NAND_PIN_HOLD 17                 /* -1 if not connected */
-#define NAND_CLOCK_HZ (50 * 1000 * 1000) /* 40 MHz — conservative */
+#define NAND_CLOCK_HZ (50 * 1000 * 1000) /* 50 MHz — conservative */
 
 static const char TAG[] = "NAND_STORAGE";
-static const char msg[] = "Exemplo de teste para driver da memoria nand mx35lf1 para implementar no dongle v3....";
+static const char msg[] = "Sample test message for the mx35lf1 NAND driver to test the funcionality";
 static char receive[sizeof(msg)];
 static char copied_data[sizeof(msg)];
 static nand_handle_t handle;
 
-void app_main(void)
-{
-    ESP_LOGI(TAG, "=== Testing NAND Driver ===");
-    // esp_log_level_set("mx35lf1", ESP_LOG_DEBUG);
+/* ------------------------------------------------------------------------ */
+/* Helpers                                                                   */
+/* ------------------------------------------------------------------------ */
 
+static bool log_result(const char *test_name, bool ok, const char *ok_msg, const char *err_msg)
+{
+    ESP_LOGI(TAG, "=== Testing %s ===", test_name);
+    ESP_LOGI(TAG, "%s", ok ? ok_msg : err_msg);
+    return ok;
+}
+
+static bool test_init(void)
+{
     spi_bus_config_t bus = {
         .mosi_io_num = NAND_PIN_MOSI,
         .miso_io_num = NAND_PIN_MISO,
@@ -42,7 +50,6 @@ void app_main(void)
         .max_transfer_sz = NAND_SPI_MAX_TRANSFER,
         .flags = SPICOMMON_BUSFLAG_MASTER,
     };
-
     spi_bus_initialize(NAND_SPI_HOST, &bus, SPI_DMA_CH_AUTO);
 
     nand_config_t cfg = {
@@ -58,15 +65,12 @@ void app_main(void)
         .disable_ecc = false,
     };
 
-    ESP_LOGI(TAG, "=== Testing Init NAND Driver ===");
     bool ok = nand_mx35lf1_init(&handle, &cfg) == NAND_RET_OK;
-    const char *response = ok ? "Init function ok" : "Error in Init function";
-    ESP_LOGI(TAG, "%s", response);
-    if (!ok)
-    {
-        return;
-    }
+    return log_result("Init", ok, "Init function ok", "Error in Init function");
+}
 
+static void print_info(void)
+{
     nand_info_t info;
     nand_mx35lf1_get_info(&handle, &info);
 
@@ -78,6 +82,87 @@ void app_main(void)
     ESP_LOGI(TAG, "  Total capacity  : %" PRIu32 " MB data", (uint32_t) (NAND_TOTAL_SIZE / (1024UL * 1024UL)));
     ESP_LOGI(TAG, "  Internal ECC    : %s", info.ecc_enabled ? "ON" : "OFF");
     ESP_LOGI(TAG, "  Mounted         : %s", nand_mx35lf1_mounted(&handle) ? "ON" : "OFF");
+}
+
+static bool test_block_erase(row_address_t row)
+{
+    bool ok = nand_mx35lf1_block_erase(&handle, row) == NAND_RET_OK;
+    return log_result("Block Erase", ok, "Erase function passed", "Error in Block erase function");
+}
+
+static bool test_block_is_bad(row_address_t row, bool *is_bad)
+{
+    bool ok = nand_mx35lf1_block_is_bad(&handle, row, is_bad) == NAND_RET_OK;
+    if (!log_result("Block Is Bad", ok, "Block is bad function ok", "Error in Block is bad function"))
+    {
+        return false;
+    }
+    ESP_LOGI(TAG, "Block is bad function passed - is bad? %s", *is_bad ? "YES" : "NO");
+    return true;
+}
+
+static bool test_page_is_free(row_address_t row, bool *is_free)
+{
+    bool ok = nand_mx35lf1_page_is_free(&handle, row, is_free) == NAND_RET_OK;
+    if (!log_result("Page Is Free", ok, "Block is free function ok", "Error in Block is free function"))
+    {
+        return false;
+    }
+    ESP_LOGI(TAG, "Block is free function passed - is free? %s", *is_free ? "YES" : "NO");
+    return true;
+}
+
+static bool test_page_program(row_address_t row, column_address_t column)
+{
+    ESP_LOGI(TAG, "=== Testing Page Program ===");
+    ESP_LOGI(TAG, "Program buffer");
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, (uint8_t *) msg, sizeof(msg), ESP_LOG_WARN);
+
+    bool ok = nand_mx35lf1_page_program(&handle, row, column, (const uint8_t *) msg, sizeof(msg)) == NAND_RET_OK;
+    ESP_LOGI(TAG, "%s", ok ? "Page program function ok" : "Error in Page program function");
+    if (ok)
+    {
+        ESP_LOGI(TAG, "Program function passed");
+    }
+    return ok;
+}
+
+static bool test_page_read(row_address_t row, column_address_t column, char *buffer, size_t size)
+{
+    ESP_LOGI(TAG, "=== Testing Page Read ===");
+    bool ok = nand_mx35lf1_page_read(&handle, row, column, (uint8_t *) buffer, size) == NAND_RET_OK;
+    ESP_LOGI(TAG, "%s", ok ? "Page read function ok" : "Error in Page read function");
+    if (!ok)
+    {
+        return false;
+    }
+    ESP_LOGI(TAG, "Read buffer");
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, (uint8_t *) buffer, size, ESP_LOG_WARN);
+    ESP_LOGI(TAG, "Read function passed");
+    ESP_LOGI(TAG, "%s", buffer);
+    return true;
+}
+
+static bool test_page_copy(row_address_t src, row_address_t dst)
+{
+    bool ok = nand_mx35lf1_page_copy(&handle, src, dst) == NAND_RET_OK;
+    return log_result("Page Copy", ok, "Copy function passed", "Error in Page copy function");
+}
+
+/* ------------------------------------------------------------------------ */
+/* Entry point                                                               */
+/* ------------------------------------------------------------------------ */
+
+void app_main(void)
+{
+    ESP_LOGI(TAG, "=== Testing NAND Driver ===");
+    // esp_log_level_set("mx35lf1", ESP_LOG_DEBUG);
+
+    if (!test_init())
+    {
+        return;
+    }
+    print_info();
 
     // nand_mx35lf1_clear(&handle);
     // for (int i = 0; i < NAND_BLOCKS_PER_LUN; i++)
@@ -95,114 +180,54 @@ void app_main(void)
     // return;
 
     row_address_t row = {.block = TEST_BLOCK, .page = TEST_PAGE};
-    column_address_t column = 0;
-
-    ESP_LOGI(TAG, "=== Testing Block Erase NAND Driver ===");
-
-    ok = nand_mx35lf1_block_erase(&handle, row) == NAND_RET_OK;
-    response = ok ? "Block erase function ok" : "Error in Block erase function";
-    ESP_LOGI(TAG, "%s", response);
-    if (!ok)
-    {
-        return;
-    }
-    ESP_LOGI(TAG, "Erase function passed");
-
-    ESP_LOGI(TAG, "=== Testing Block is Bad NAND Driver ===");
-    bool is_bad = false;
-    ok = nand_mx35lf1_block_is_bad(&handle, row, &is_bad) == NAND_RET_OK;
-    response = ok ? "Block is bad function ok" : "Error in Block is bad function";
-    ESP_LOGI(TAG, "%s", response);
-    if (!ok)
-    {
-        return;
-    }
-    ESP_LOGI(TAG, "Block is bad function passed - is bad? %s", is_bad ? "YES" : "NO");
-
-    ESP_LOGI(TAG, "=== Testing Block Erase NAND Driver ===");
-
-    ok = nand_mx35lf1_block_erase(&handle, row) == NAND_RET_OK;
-    response = ok ? "Block erase function ok" : "Error in Block erase function";
-    ESP_LOGI(TAG, "%s", response);
-    if (!ok)
-    {
-        return;
-    }
-    ESP_LOGI(TAG, "Erase function passed");
-
-    ESP_LOGI(TAG, "=== Testing Block is Free NAND Driver ===");
-    bool is_free = false;
-    ok = nand_mx35lf1_page_is_free(&handle, row, &is_free) == NAND_RET_OK;
-    response = ok ? "Block is free function ok" : "Error in Block is free function";
-    ESP_LOGI(TAG, "%s", response);
-    if (!ok)
-    {
-        return;
-    }
-    ESP_LOGI(TAG, "Block is free function passed - is free? %s", is_bad ? "YES" : "NO");
-
-    ESP_LOGI(TAG, "=== Testing Page Program NAND Driver ===");
-    ESP_LOGI(TAG, "Program buffer");
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, (uint8_t *) msg, sizeof(msg), ESP_LOG_WARN);
-
-    ok = nand_mx35lf1_page_program(&handle, row, column, (const uint8_t *) msg, sizeof(msg)) == NAND_RET_OK;
-    response = ok ? "Page program function ok" : "Error in Page program function";
-    ESP_LOGI(TAG, "%s", response);
-    if (!ok)
-    {
-        return;
-    }
-    ESP_LOGI(TAG, "Program function passed");
-
-    ESP_LOGI(TAG, "=== Testing Read Program NAND Driver ===");
-    ok = nand_mx35lf1_page_read(&handle, row, column, (uint8_t *) receive, sizeof(receive)) == NAND_RET_OK;
-    response = ok ? "Page read function ok" : "Error in Page read function";
-    ESP_LOGI(TAG, "%s", response);
-    if (!ok)
-    {
-        return;
-    }
-    ESP_LOGI(TAG, "Readed buffer");
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, (uint8_t *) receive, sizeof(receive), ESP_LOG_WARN);
-
-    ESP_LOGI(TAG, "Read function passed");
-    ESP_LOGI(TAG, "%s", receive);
-
-    ESP_LOGI(TAG, "=== Testing Block is Free NAND Driver ===");
-    is_free = false;
-    ok = nand_mx35lf1_page_is_free(&handle, row, &is_free) == NAND_RET_OK;
-    response = ok ? "Block is free function ok" : "Error in Block is free function";
-    ESP_LOGI(TAG, "%s", response);
-    if (!ok)
-    {
-        return;
-    }
-    ESP_LOGI(TAG, "Block is free function passed - is free? %s", is_bad ? "YES" : "NO");
-
-    ESP_LOGI(TAG, "=== Testing Page Copy NAND Driver ===");
     row_address_t row_dst = {.block = TEST_BLOCK + 1, .page = TEST_PAGE};
+    column_address_t column = 0;
     column_address_t column_dst = 0;
+    bool is_bad = false;
+    bool is_free = false;
 
-    ok = nand_mx35lf1_page_copy(&handle, row, row_dst) == NAND_RET_OK;
-    response = ok ? "Page copy function ok" : "Error in Page copy function";
-    ESP_LOGI(TAG, "%s", response);
-    if (!ok)
+    if (!test_block_erase(row))
     {
         return;
     }
-    ESP_LOGI(TAG, "Copy function passed");
 
-    ESP_LOGI(TAG, "=== Testing Copied Read Program NAND Driver ===");
-    ok = nand_mx35lf1_page_read(&handle, row_dst, column_dst, (uint8_t *) copied_data, sizeof(copied_data)) == NAND_RET_OK;
-    response = ok ? "Page read function ok" : "Error in Page read function";
-    ESP_LOGI(TAG, "%s", response);
-    if (!ok)
+    if (!test_block_is_bad(row, &is_bad))
     {
         return;
     }
-    ESP_LOGI(TAG, "Readed buffer");
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, (uint8_t *) copied_data, sizeof(copied_data), ESP_LOG_WARN);
 
-    ESP_LOGI(TAG, "Read function passed");
-    ESP_LOGI(TAG, "%s", copied_data);
+    if (!test_block_erase(row))
+    {
+        return;
+    }
+
+    if (!test_page_is_free(row, &is_free))
+    {
+        return;
+    }
+
+    if (!test_page_program(row, column))
+    {
+        return;
+    }
+
+    if (!test_page_read(row, column, receive, sizeof(receive)))
+    {
+        return;
+    }
+
+    if (!test_page_is_free(row, &is_free))
+    {
+        return;
+    }
+
+    if (!test_page_copy(row, row_dst))
+    {
+        return;
+    }
+
+    if (!test_page_read(row_dst, column_dst, copied_data, sizeof(copied_data)))
+    {
+        return;
+    }
 }
