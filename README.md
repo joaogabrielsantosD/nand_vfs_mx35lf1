@@ -47,6 +47,9 @@ Connects the Dhara library to the `diskio` interface defined by ESP-IDF's FatFS.
 ### 4. VFS Layer (`nand_vfs.h` / `.c`)
 Provides functions to initialize the FTL, format the volume (if necessary), and register the VFS mount point (e.g., `/nand`).
 - Enables the use of standard C library functions (`fopen`, `fwrite`, `fread`, `fclose`, `unlink`, etc.).
+- Configuration via `vfs_nand_conf_t`, supporting custom mount points, optional internal SPI bus initialization, and auto-formatting on mount failure.
+- VFS lifecycle management functions (`vfs_nand_register`, `vfs_nand_unregister`).
+- Utility APIs to check mount status (`vfs_nand_mounted`), force format the volume (`vfs_nand_format`), and query storage usage (`vfs_nand_info`).
 
 ---
 
