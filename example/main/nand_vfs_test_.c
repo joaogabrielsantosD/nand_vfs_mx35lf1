@@ -7,6 +7,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#define FORMAT_NAND
+
 #define NAND_PATH          "/nand"
 #define NAND_DIR_PATH      "/nand/app/"
 #define NAND_DIR_PATH_FILE "/nand/app/firm.txt"
@@ -355,10 +357,10 @@ static void test_file_with_dir(void)
 static void test_file_with_fseek(void)
 {
     char receive[sizeof(data)];
-    FILE *fr = fopen(NAND_TEST_FILE, "rb");
+    FILE *fr = fopen(NAND_TEST_OLD_FILE, "rb");
     if (!fr)
     {
-        ESP_LOGE(TAG, "Failed to open file %s", NAND_TEST_FILE);
+        ESP_LOGE(TAG, "Failed to open file %s", NAND_TEST_OLD_FILE);
         return;
     }
 
@@ -372,34 +374,41 @@ static void test_file_with_fseek(void)
     }
 
     ESP_LOGI(TAG, "Read with SEEK operation");
-    ESP_LOGD(TAG, "Read %u bytes from file: %s", (unsigned) r, NAND_TEST_FILE);
+    ESP_LOGD(TAG, "Read %u bytes from file: %s", (unsigned) r, NAND_TEST_OLD_FILE);
     ESP_LOGD(TAG, "%s", receive);
-    list_file_data(NAND_TEST_FILE);
+    list_file_data(NAND_TEST_OLD_FILE);
 }
 
 static bool test_mount(void)
 {
-    spi_bus_config_t bus = {
-        .mosi_io_num = NAND_PIN_MOSI,
-        .miso_io_num = NAND_PIN_MISO,
-        .sclk_io_num = NAND_PIN_SCLK,
-        .quadwp_io_num = NAND_PIN_WP,   /* WP#  / SIO2 */
-        .quadhd_io_num = NAND_PIN_HOLD, /* HOLD#/ SIO3 */
-        .max_transfer_sz = NAND_SPI_MAX_TRANSFER,
-        .flags = SPICOMMON_BUSFLAG_MASTER,
-    };
-    spi_bus_initialize(NAND_SPI_HOST, &bus, SPI_DMA_CH_AUTO);
+    vfs_nand_conf_t conf = {
+        .base_path = NAND_PATH,
+        .format_if_mounted_failed = true,
 
-    nand_config_t cfg = {
-        .spi_host = NAND_SPI_HOST,
-        .pin_cs = NAND_PIN_CS,
-        .clock_speed_hz = NAND_CLOCK_HZ,
-        .disable_ecc = false,
+        .init_spi_bus = true,
+        .spi_bus =
+            {
+                .mosi_io_num = NAND_PIN_MOSI,
+                .miso_io_num = NAND_PIN_MISO,
+                .sclk_io_num = NAND_PIN_SCLK,
+                .quadwp_io_num = NAND_PIN_WP,   /* WP#  / SIO2 */
+                .quadhd_io_num = NAND_PIN_HOLD, /* HOLD#/ SIO3 */
+                .max_transfer_sz = NAND_SPI_MAX_TRANSFER,
+                .flags = SPICOMMON_BUSFLAG_MASTER,
+            },
+
+        .nand_conf =
+            {
+                .spi_host = NAND_SPI_HOST,
+                .pin_cs = NAND_PIN_CS,
+                .clock_speed_hz = NAND_CLOCK_HZ,
+                .disable_ecc = false,
+            },
     };
 
     ESP_LOGI(TAG, "Mount vfs nand");
-    bool ok = mount_vfs_nand(NAND_PATH, &cfg) == ESP_OK;
-    ESP_LOGI(TAG, "%s", ok ? "Mounted success" : "Mounted error");
+    bool ok = vfs_nand_register(&conf) == ESP_OK;
+    ESP_LOGI(TAG, "%s - %d", ok ? "Mounted success" : "Mounted error", (int) vfs_nand_mounted());
     return ok;
 }
 
@@ -443,6 +452,10 @@ void app_main(void)
         return;
     }
 
+#ifdef FORMAT_NAND
+    vfs_nand_format();
+#endif
+
     if (!write_file(NAND_TEST_OLD_FILE))
     {
         return;
@@ -452,6 +465,10 @@ void app_main(void)
     test_rename_and_unlink();
     test_mkdir_and_file();
 
+    size_t total, used;
+    vfs_nand_info(&total, &used);
+    ESP_LOGI(TAG, "Total bytes: %d - Used Bytes: %d", total, used);
+
     ESP_LOGI(TAG, "Unmount vfs nand");
-    unmount_vfs_nand();
+    vfs_nand_unregister();
 }
