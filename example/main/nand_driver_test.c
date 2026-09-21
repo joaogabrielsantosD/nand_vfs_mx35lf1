@@ -173,8 +173,8 @@ void app_main(void)
     // }
     // return;
 
-    row_address_t row = {.block = TEST_BLOCK, .page = TEST_PAGE};
-    row_address_t row_dst = {.block = TEST_BLOCK + 1, .page = TEST_PAGE};
+    row_address_t row = NAND_ROW_ADDR(TEST_BLOCK, TEST_PAGE);
+    row_address_t row_dst = NAND_ROW_ADDR(TEST_BLOCK + 1, TEST_PAGE);
     column_address_t column = 0;
     column_address_t column_dst = 0;
     bool is_bad = false;

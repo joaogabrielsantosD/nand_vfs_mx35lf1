@@ -4,7 +4,7 @@
 #include "mx35lf1_driver.h"
 #include <esp_vfs_fat.h>
 
-esp_err_t mount_vfs_nand(const char *base_path, nand_config_t *cfg);
+esp_err_t mount_vfs_nand(const char *base_path, const nand_config_t *cfg);
 void unmount_vfs_nand(void);
 
 #endif

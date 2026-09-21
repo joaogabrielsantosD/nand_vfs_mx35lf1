@@ -1,17 +1,20 @@
 #include "nand_vfs.h"
 
+#include "sdkconfig.h"
+
 #include "esp_err.h"
 #include "esp_log.h"
 #include "nand_diskio.h"
-#include <sdkconfig.h>
 #include <string.h>
+
+#define VFS_NAND_MAX_OPENED_FILES CONFIG_VFS_NAND_MAX_OPENED_FILES
 
 #define VFS_NAND_BASE_PATH_MAX_LEN 15
 
 static const char TAG[] = "nand_vfs";
 static char vfs_nand_base_path[VFS_NAND_BASE_PATH_MAX_LEN];
 
-esp_err_t mount_vfs_nand(const char *base_path, nand_config_t *cfg)
+esp_err_t mount_vfs_nand(const char *base_path, const nand_config_t *cfg)
 {
     if (base_path == NULL || cfg == NULL)
     {
@@ -37,13 +40,17 @@ esp_err_t mount_vfs_nand(const char *base_path, nand_config_t *cfg)
     strncpy(vfs_nand_base_path, base_path, VFS_NAND_BASE_PATH_MAX_LEN - 1);
     vfs_nand_base_path[VFS_NAND_BASE_PATH_MAX_LEN - 1] = '\0';
 
-    diskio_nand_dhara_init(cfg);
+    esp_err_t err = diskio_nand_dhara_init(cfg);
+    if (err != ESP_OK)
+    {
+        return err;
+    }
 
     FATFS *fs_dummy;
     esp_vfs_fat_conf_t f_cfg = {
         .base_path = vfs_nand_base_path,
-        .fat_drive = PDRV_NAND_FTL_PATH,
-        .max_files = CONFIG_VFS_NAND_MAX_OPENED_FILES,
+        .fat_drive = "0:",
+        .max_files = VFS_NAND_MAX_OPENED_FILES,
     };
 
     esp_err_t ret = esp_vfs_fat_register_cfg(&f_cfg, &fs_dummy);

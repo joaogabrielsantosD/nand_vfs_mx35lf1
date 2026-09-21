@@ -117,7 +117,9 @@ static inline int spi_write(nand_handle_t *h, const uint8_t *tx, size_t len)
 
 static bool validate_row_address(row_address_t row)
 {
-    if ((row.block > NAND_MAX_BLOCK_ADDRESS) || (row.page > NAND_MAX_PAGE_ADDRESS))
+    uint32_t block = row >> 6;
+    uint32_t page = row & 0x3F;
+    if ((block > NAND_MAX_BLOCK_ADDRESS) || (page > NAND_MAX_PAGE_ADDRESS))
     {
         return false;
     }
@@ -183,17 +185,12 @@ static int wait_ready(nand_handle_t *h, feature_reg_status_t *status_out, uint32
     for (;;)
     {
         int ret = get_feature(h, NAND_FEAT_STATUS, &status_out->whole);
-        ESP_LOGD(TAG, "status register=%02X", status_out->whole);
         if (ret != NAND_RET_OK)
         {
             return ret;
         }
 
-        if (status_out->OIP == 0)
-        {
-            return NAND_RET_OK;
-        }
-
+        ESP_LOGD(TAG, "status register=%02X", status_out->whole);
         if (status_out->E_FAIL == 0x01)
         {
             ESP_LOGE(TAG, "Error in E_FAIL bit in wait function");
@@ -207,6 +204,11 @@ static int wait_ready(nand_handle_t *h, feature_reg_status_t *status_out, uint32
         if (status_out->ECCS0_2 == 0x02)
         {
             ESP_LOGE(TAG, "Error in ECCSx bit in wait function");
+        }
+
+        if (status_out->OIP == 0)
+        {
+            return NAND_RET_OK;
         }
 
         if (esp_timer_get_time() > deadline_us)
@@ -368,9 +370,9 @@ static int program_execute(nand_handle_t *h, row_address_t row)
 {
     uint8_t tx_data[4] = {0};
     tx_data[0] = CMD_PROG_EXECUTE;
-    tx_data[1] = row.whole >> 16;
-    tx_data[2] = row.whole >> 8;
-    tx_data[3] = row.whole;
+    tx_data[1] = row >> 16;
+    tx_data[2] = row >> 8;
+    tx_data[3] = row;
 
     int ret = spi_write(h, tx_data, sizeof(tx_data));
     if (ret != NAND_RET_OK)
@@ -400,9 +402,9 @@ static int page_read(nand_handle_t *h, row_address_t row)
 {
     uint8_t tx_data[4] = {0};
     tx_data[0] = CMD_PAGE_READ;
-    tx_data[1] = row.whole >> 16;
-    tx_data[2] = row.whole >> 8;
-    tx_data[3] = row.whole;
+    tx_data[1] = row >> 16;
+    tx_data[2] = row >> 8;
+    tx_data[3] = row;
 
     int ret = spi_write(h, tx_data, sizeof(tx_data));
     if (ret != NAND_RET_OK)
@@ -455,9 +457,9 @@ static int block_erase(nand_handle_t *h, row_address_t row)
 {
     uint8_t tx_data[4] = {0};
     tx_data[0] = CMD_BLOCK_ERASE;
-    tx_data[1] = row.whole >> 16;
-    tx_data[2] = row.whole >> 8;
-    tx_data[3] = row.whole;
+    tx_data[1] = row >> 16;
+    tx_data[2] = row >> 8;
+    tx_data[3] = row;
 
     int ret = spi_write(h, tx_data, sizeof(tx_data));
     if (ret != NAND_RET_OK)
@@ -719,7 +721,7 @@ int nand_mx35lf1_block_erase(nand_handle_t *h, row_address_t row)
 {
     NAND_CHECK_ARG(h);
     NAND_CHECK_HANDLE(h);
-    row.page = 0;  // make sure page address is zero
+    row &= ~0x3F;  // make sure page address is zero
 
     if (!validate_row_address(row))
     {
@@ -836,7 +838,7 @@ int nand_mx35lf1_clear(nand_handle_t *h)
     for (int i = 0; i < NAND_BLOCKS_PER_LUN; i++)
     {
         ESP_LOGI(TAG, "Erase block : %d", i);
-        row_address_t row = {.block = i, .page = 0};
+        row_address_t row = NAND_ROW_ADDR(i, 0);
         int ret = nand_mx35lf1_block_is_bad(h, row, &is_bad);
         if (ret != NAND_RET_OK)
         {
@@ -860,13 +862,13 @@ int nand_mx35lf1_clear(nand_handle_t *h)
     return NAND_RET_OK;
 }
 
-bool nand_mx35lf1_mounted(nand_handle_t *h)
+bool nand_mx35lf1_mounted(const nand_handle_t *h)
 {
     NAND_CHECK_ARG(h);
     return h->initialized;
 }
 
-int nand_mx35lf1_get_info(nand_handle_t *h, nand_info_t *info_out)
+int nand_mx35lf1_get_info(const nand_handle_t *h, nand_info_t *info_out)
 {
     NAND_CHECK_ARG(h);
     NAND_CHECK_ARG(info_out);
@@ -878,4 +880,29 @@ int nand_mx35lf1_get_info(nand_handle_t *h, nand_info_t *info_out)
     info_out->spare_size = h->info.spare_size;
     info_out->total_blocks = h->info.total_blocks;
     return NAND_RET_OK;
+}
+
+const char *nand_err_to_str(const int code)
+{
+    if (code > NAND_RET_OK || code < NAND_RET_E_INVALID_ARG)
+    {
+        return "unknown";
+    }
+
+    nand_err_t err = (nand_err_t) code;
+    switch (err)
+    {
+        case NAND_RET_OK: return "NAND_RET_OK";
+        case NAND_RET_BAD_SPI: return "NAND_RET_BAD_SPI";
+        case NAND_RET_TIMEOUT: return "NAND_RET_TIMEOUT";
+        case NAND_RET_DEVICE_ID: return "NAND_RET_DEVICE_ID";
+        case NAND_RET_BAD_ADDRESS: return "NAND_RET_BAD_ADDRESS";
+        case NAND_RET_INVALID_LEN: return "NAND_RET_INVALID_LEN";
+        case NAND_RET_ECC_REFRESH: return "NAND_RET_ECC_REFRESH";
+        case NAND_RET_ECC_ERR: return "NAND_RET_ECC_ERR";
+        case NAND_RET_P_FAIL: return "NAND_RET_P_FAIL";
+        case NAND_RET_E_FAIL: return "NAND_RET_E_FAIL";
+        case NAND_RET_E_INVALID_ARG: return "NAND_RET_ECC_REFRESH";
+        default: return "unknown";
+    }
 }

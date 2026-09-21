@@ -370,6 +370,8 @@ static void test_file_with_fseek(void)
         ESP_LOGE(TAG, "Failed to close file (errno=%d msg=%s)", errno, strerror(errno));
         return;
     }
+
+    ESP_LOGI(TAG, "Read with SEEK operation");
     ESP_LOGD(TAG, "Read %u bytes from file: %s", (unsigned) r, NAND_TEST_FILE);
     ESP_LOGD(TAG, "%s", receive);
     list_file_data(NAND_TEST_FILE);

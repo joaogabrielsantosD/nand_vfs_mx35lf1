@@ -108,18 +108,8 @@ typedef struct
 } nand_config_t;
 
 /// @brief Nand row address
-typedef union
-{
-    uint32_t whole;
-    struct
-    {
-        /// @brief valid range 0-63
-        uint32_t page : 6;
-
-        /// @brief valid range 0-1023
-        uint32_t block : 26;  // complete the 32 bits (6 + 26 == 32)
-    };
-} row_address_t;
+typedef uint32_t row_address_t;
+#define NAND_ROW_ADDR(block, page) ((((uint32_t) (block)) << 6) | ((uint32_t) (page) & 0x3F))
 
 /// @brief Nand column address (valid range 0-2111)
 typedef uint16_t column_address_t;
@@ -143,7 +133,8 @@ int nand_mx35lf1_block_mark_bad(nand_handle_t *h, row_address_t row);
 int nand_mx35lf1_page_is_free(nand_handle_t *h, row_address_t row, bool *is_free);
 int nand_mx35lf1_clear(nand_handle_t *h);
 
-bool nand_mx35lf1_mounted(nand_handle_t *h);
-int nand_mx35lf1_get_info(nand_handle_t *h, nand_info_t *info_out);
+bool nand_mx35lf1_mounted(const nand_handle_t *h);
+int nand_mx35lf1_get_info(const nand_handle_t *h, nand_info_t *info_out);
+const char *nand_err_to_str(const int code);
 
 #endif  // MX35LF1_DRIVER_H

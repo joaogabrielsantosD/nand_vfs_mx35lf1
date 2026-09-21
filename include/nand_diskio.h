@@ -5,11 +5,8 @@
 #include <diskio_impl.h>
 #include <ff.h>
 
-#define PDRV_NAND_FTL      0
-#define PDRV_NAND_FTL_PATH "0:"
-
-void diskio_nand_dhara_init(nand_config_t *cfg);
-void diskio_nand_dhara_deinit(void);
+esp_err_t diskio_nand_dhara_init(const nand_config_t *cfg);
+esp_err_t diskio_nand_dhara_deinit(void);
 nand_handle_t *diskio_nand_get_handle(void);
 
 #endif

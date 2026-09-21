@@ -8,6 +8,16 @@ menu "NAND MX35 diskIO Manager Configuration"
             Maximum number of files that can be opened simultaneously on the
             NAND Virtual File System (VFS).
 
+    config DHARA_GARBAGE_COLLECTOR_RATIO
+        int "Garbage collector ratio for NAND VFS"
+        default 5
+        range 1 10
+        help
+            The garbage collector ratio determines how often the garbage collector
+            runs in the NAND Virtual File System (VFS). A higher value means that
+            the garbage collector will run less frequently, which can improve performance
+            but may lead to increased fragmentation.
+
     config NAND_MX35_PROTECTED_MODE
         bool "Enable protected mode for NAND MX35"
         default n
