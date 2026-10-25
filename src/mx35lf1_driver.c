@@ -1,12 +1,16 @@
 #include "mx35lf1_driver.h"
+#include "mx35lf1_cmd.h"
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h" /* esp_rom_delay_us()     */
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
+#include <inttypes.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define ECC_STATUS_NO_ERR        0b00
@@ -16,9 +20,6 @@
 #define BAD_BLOCK_MARK 0
 
 #define NAND_TIMEOUT_RESET_MS 10U
-#define NAND_TIMEOUT_READ_MS  10U
-#define NAND_TIMEOUT_PROG_MS  50U
-#define NAND_TIMEOUT_ERASE_MS 100U
 #define NAND_OP_TIMEOUT       3000  // ms
 
 #define NAND_CHECK_ARG(p)                   \
@@ -40,6 +41,9 @@
             return NAND_RET_E_INVALID_ARG;    \
         }                                     \
     } while (0)
+
+#define NAND_LOCK(h)   xSemaphoreTakeRecursive((h)->lock, portMAX_DELAY)
+#define NAND_UNLOCK(h) xSemaphoreGiveRecursive((h)->lock)
 
 typedef union
 {
@@ -135,6 +139,11 @@ static bool validate_column_address(column_address_t address)
     return true;
 }
 
+static bool validate_length(column_address_t column, size_t len)
+{
+    return (len > 0U) && (len <= (size_t) (NAND_PAGE_FULL_SIZE - column));
+}
+
 static int get_ret_from_ecc_status(feature_reg_status_t status)
 {
     int ret;
@@ -180,7 +189,8 @@ static int get_feature(nand_handle_t *h, uint8_t reg, uint8_t *data_out)
 
 static int wait_ready(nand_handle_t *h, feature_reg_status_t *status_out, uint32_t timeout_ms)
 {
-    int64_t deadline_us = esp_timer_get_time() + (int64_t) timeout_ms * 1000LL;
+    const int64_t start_us = esp_timer_get_time();
+    const int64_t deadline_us = start_us + (int64_t) timeout_ms * 1000LL;
 
     for (;;)
     {
@@ -190,35 +200,28 @@ static int wait_ready(nand_handle_t *h, feature_reg_status_t *status_out, uint32
             return ret;
         }
 
-        ESP_LOGD(TAG, "status register=%02X", status_out->whole);
-        if (status_out->E_FAIL == 0x01)
-        {
-            ESP_LOGE(TAG, "Error in E_FAIL bit in wait function");
-        }
-
-        if (status_out->P_FAIL == 0x01)
-        {
-            ESP_LOGE(TAG, "Error in P_FAIL bit in wait function");
-        }
-
-        if (status_out->ECCS0_2 == 0x02)
-        {
-            ESP_LOGE(TAG, "Error in ECCSx bit in wait function");
-        }
-
         if (status_out->OIP == 0)
         {
+            ESP_LOGD(TAG, "status register=%02X", status_out->whole);
             return NAND_RET_OK;
         }
 
-        if (esp_timer_get_time() > deadline_us)
+        const int64_t now_us = esp_timer_get_time();
+        if (now_us > deadline_us)
         {
             ESP_LOGE(TAG, "wait_ready timeout (%u ms, SR=0x%02X)", (unsigned) timeout_ms, status_out->whole);
             return NAND_RET_TIMEOUT;
         }
 
-        /* Poll every 200 µs — fine-grained enough for tRD=25 µs */
-        esp_rom_delay_us(200U);
+        if ((now_us - start_us) < 2000)
+        {
+            esp_rom_delay_us(50U); /* reads (tRD) and programs finish within this window */
+        }
+
+        else
+        {
+            vTaskDelay(1); /* erase takes milliseconds: do not hog the CPU */
+        }
     }
 }
 
@@ -229,6 +232,17 @@ static int write_enable(nand_handle_t *h)
     if (ret == NAND_RET_OK)
     {
         ESP_LOGD(TAG, "Enable WEL bit");
+    }
+    return ret;
+}
+
+static int write_disable(nand_handle_t *h)
+{
+    uint8_t cmd = CMD_WRITE_DISABLE;
+    int ret = spi_write(h, &cmd, sizeof(cmd));
+    if (ret == NAND_RET_OK)
+    {
+        ESP_LOGD(TAG, "Disable WEL bit");
     }
     return ret;
 }
@@ -245,17 +259,6 @@ static int unlock_all_blocks(nand_handle_t *h)
 }
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-
-static int write_disable(nand_handle_t *h)
-{
-    uint8_t cmd = CMD_WRITE_DISABLE;
-    int ret = spi_write(h, &cmd, sizeof(cmd));
-    if (ret == NAND_RET_OK)
-    {
-        ESP_LOGD(TAG, "Disable WEL bit");
-    }
-    return ret;
-}
 
 static int lock_all_blocks(nand_handle_t *h)
 {
@@ -290,25 +293,82 @@ static int nand_write_protect(nand_handle_t *h)
     return NAND_RET_OK;
 }
 
-static int nand_write_unprotect(nand_handle_t *h)
+#endif /* CONFIG_NAND_MX35_PROTECTED_MODE */
+
+static int write_begin(nand_handle_t *h)
 {
+#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
     int ret = unlock_all_blocks(h);
     if (ret != NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error to unlock all blocks");
+        ESP_LOGE(TAG, "Failed to write unprotected");
+    }
+    return ret;
+#else
+    (void) h;
+    return NAND_RET_OK;
+#endif
+}
+
+static int write_end(nand_handle_t *h, int op_ret)
+{
+    int ret = NAND_RET_OK;
+
+#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
+    ret = nand_write_protect(h); /* also clears WEL */
+    if (ret != NAND_RET_OK)
+    {
+        ESP_LOGE(TAG, "failed to set the write protection");
+    }
+#else
+    if (op_ret != NAND_RET_OK)
+    {
+        (void) write_disable(h); /* best effort: do not leave WEL set after a failed operation */
+    }
+#endif
+
+    return (op_ret != NAND_RET_OK) ? op_ret : ret;
+}
+
+static int configure_ecc(nand_handle_t *h, bool enable)
+{
+    uint8_t value = 0;
+    int ret = get_feature(h, NAND_FEAT_SECURE_OTP, &value);
+    if (ret != NAND_RET_OK)
+    {
         return ret;
     }
 
+    feature_reg_configuration_t reg = {.whole = value};
+    reg.ECC_EN = enable ? 1U : 0U;
+
+    ret = set_feature(h, NAND_FEAT_SECURE_OTP, reg.whole);
+    if (ret != NAND_RET_OK)
+    {
+        return ret;
+    }
+
+    feature_reg_status_t st;
+    ret = wait_ready(h, &st, NAND_OP_TIMEOUT);
+    if (ret != NAND_RET_OK)
+    {
+        return ret;
+    }
+
+    ret = get_feature(h, NAND_FEAT_SECURE_OTP, &value);
+    if (ret != NAND_RET_OK)
+    {
+        return ret;
+    }
+
+    feature_reg_configuration_t readback = {.whole = value};
+    if (readback.ECC_EN != reg.ECC_EN)
+    {
+        ESP_LOGE(TAG, "ECC configuration verify failed (wanted %d, got %d)", (int) reg.ECC_EN, (int) readback.ECC_EN);
+        return NAND_RET_VERIFY_FAIL;
+    }
+
     return NAND_RET_OK;
-}
-
-#endif
-
-static int enable_ecc(nand_handle_t *h)
-{
-    feature_reg_configuration_t ecc_enable = {.whole = 0};
-    ecc_enable.ECC_EN = 1;
-    return set_feature(h, NAND_FEAT_SECURE_OTP, ecc_enable.whole);
 }
 
 static int nand_reset(nand_handle_t *h)
@@ -339,6 +399,7 @@ static int nand_read_id(nand_handle_t *h, uint8_t *manufacturer_out, uint8_t *de
 
     if ((rx_data[2] != NAND_MANUFACTURER_ID) || (rx_data[3] != NAND_DEVICE_ID))
     {
+        ESP_LOGE(TAG, "Unexpected ID: manufacturer=0x%02X device=0x%02X", rx_data[2], rx_data[3]);
         return NAND_RET_DEVICE_ID;
     }
 
@@ -350,19 +411,13 @@ static int nand_read_id(nand_handle_t *h, uint8_t *manufacturer_out, uint8_t *de
 static int program_load(nand_handle_t *h, column_address_t column, const uint8_t *data_in, size_t write_len)
 {
     size_t total_len = 3 + write_len;
-    uint8_t *tx_buf = (uint8_t *) malloc(total_len);
-    if (!tx_buf)
-    {
-        return NAND_RET_E_INVALID_ARG;
-    }
 
-    tx_buf[0] = CMD_PROG_LOAD;
-    tx_buf[1] = column >> 8;
-    tx_buf[2] = column;
-    memcpy(&tx_buf[3], data_in, write_len);
+    h->tx_buf[0] = CMD_PROG_LOAD;
+    h->tx_buf[1] = column >> 8;
+    h->tx_buf[2] = column;
+    memcpy(&h->tx_buf[3], data_in, write_len);
 
-    int ret = spi_write(h, tx_buf, total_len);
-    free(tx_buf);
+    int ret = spi_write(h, h->tx_buf, total_len);
     return (ret == NAND_RET_OK) ? NAND_RET_OK : NAND_RET_BAD_SPI;
 }
 
@@ -423,33 +478,26 @@ static int page_read(nand_handle_t *h, row_address_t row)
     return get_ret_from_ecc_status(status);
 }
 
-static int read_from_cache(nand_handle_t *h, column_address_t column, uint8_t *data_out, size_t read_len)
+static int read_from_cache_raw(nand_handle_t *h, column_address_t column, uint8_t *data_out, size_t read_len)
 {
     size_t total_len = 4 + read_len;  // cmd (1B) + column (2B) + dummy (1B) + data
-    uint8_t *tx_buf = (uint8_t *) malloc(total_len);
-    uint8_t *rx_buf = (uint8_t *) malloc(total_len);
 
-    if (!tx_buf || !rx_buf)
-    {
-        free(tx_buf);
-        free(rx_buf);
-        return NAND_RET_E_INVALID_ARG;
-    }
+    h->tx_buf[0] = CMD_READ_CACHE_X1;
+    h->tx_buf[1] = column >> 8;
+    h->tx_buf[2] = column;
+    h->tx_buf[3] = 0x00;  // Dummy byte
+    /* Remaining TX bytes are don't-care while the device is shifting data out. */
 
-    memset(tx_buf, 0xFF, total_len);
-    tx_buf[0] = CMD_READ_CACHE_X1;
-    tx_buf[1] = column >> 8;
-    tx_buf[2] = column;
-    tx_buf[3] = 0x00;  // Dummy byte
+    return spi_xfer(h, h->tx_buf, h->rx_buf, total_len);
+}
 
-    int ret = spi_xfer(h, tx_buf, rx_buf, total_len);
+static int read_from_cache(nand_handle_t *h, column_address_t column, uint8_t *data_out, size_t read_len)
+{
+    int ret = read_from_cache_raw(h, column, data_out, read_len);
     if (ret == NAND_RET_OK)
     {
-        memcpy(data_out, &rx_buf[4], read_len);
+        memcpy(data_out, &h->rx_buf[4], read_len);
     }
-
-    free(tx_buf);
-    free(rx_buf);
     return ret;
 }
 
@@ -483,12 +531,71 @@ static int block_erase(nand_handle_t *h, row_address_t row)
     return NAND_RET_OK;
 }
 
+/* Lock-free internal helpers (the caller holds h->lock). */
+
+static int do_page_read(nand_handle_t *h, row_address_t row, column_address_t column, uint8_t *data_out, size_t read_len)
+{
+    int ret = page_read(h, row);
+    if (ret != NAND_RET_OK)
+    {
+        return ret;
+    }
+    return read_from_cache(h, column, data_out, read_len);
+}
+
+static int read_bad_marker(nand_handle_t *h, uint32_t block, bool *is_bad)
+{
+    uint8_t mark[2];
+    int ret = do_page_read(h, NAND_ROW_ADDR(block, 0), NAND_PAGE_SIZE, mark, sizeof(mark));
+    if (ret != NAND_RET_OK)
+    {
+        return ret;
+    }
+
+    *is_bad = (mark[0] == BAD_BLOCK_MARK || mark[1] == BAD_BLOCK_MARK);
+    return NAND_RET_OK;
+}
+
+static void release_resources(nand_handle_t *h)
+{
+    if (h->spi)
+    {
+        spi_bus_remove_device(h->spi);
+    }
+    heap_caps_free(h->tx_buf);
+    heap_caps_free(h->rx_buf);
+    if (h->lock)
+    {
+        vSemaphoreDelete(h->lock);
+    }
+    memset(h, 0, sizeof(*h));
+}
+
 /* ------------------ Public section ------------------ */
 
 int nand_mx35lf1_init(nand_handle_t *h, const nand_config_t *cfg)
 {
     NAND_CHECK_ARG(h);
     NAND_CHECK_ARG(cfg);
+
+    if (h->initialized)
+    {
+        ESP_LOGE(TAG, "Already initialized");
+        return NAND_RET_E_INVALID_ARG;
+    }
+
+    memset(h, 0, sizeof(*h));
+
+    h->lock = xSemaphoreCreateRecursiveMutex();
+    h->tx_buf = (uint8_t *) heap_caps_malloc(NAND_SPI_MAX_TRANSFER, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    h->rx_buf = (uint8_t *) heap_caps_malloc(NAND_SPI_MAX_TRANSFER, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!h->lock || !h->tx_buf || !h->rx_buf)
+    {
+        ESP_LOGE(TAG, "Failed to allocate driver resources");
+        release_resources(h);
+        return NAND_RET_NO_MEM;
+    }
+    memset(h->tx_buf, 0xFF, NAND_SPI_MAX_TRANSFER);
 
     spi_device_interface_config_t devcfg = {
         .clock_speed_hz = cfg->clock_speed_hz,
@@ -501,49 +608,52 @@ int nand_mx35lf1_init(nand_handle_t *h, const nand_config_t *cfg)
         .cs_ena_posttrans = 0,
     };
 
-    int ret = spi_bus_add_device(cfg->spi_host, &devcfg, &h->spi) != ESP_OK ? NAND_RET_BAD_SPI : NAND_RET_OK;
-    if (ret != NAND_RET_OK)
+    esp_err_t esp_ret = spi_bus_add_device(cfg->spi_host, &devcfg, &h->spi);
+    if (esp_ret != ESP_OK)
     {
-        ESP_LOGE(TAG, "spi_bus_add_device failed: %d", ret);
-        return ret;
+        ESP_LOGE(TAG, "spi_bus_add_device failed: %s", esp_err_to_name(esp_ret));
+        h->spi = NULL;
+        release_resources(h);
+        return NAND_RET_BAD_SPI;
     }
+
+    int ret;
+    uint8_t manufacturer = 0;
+    uint8_t device = 0;
 
     vTaskDelay(pdMS_TO_TICKS(NAND_TIMEOUT_RESET_MS));
     ret = nand_reset(h);
     if (ret != NAND_RET_OK)
     {
         ESP_LOGE(TAG, "Error to reset the flash");
-        return ret;
+        goto fail;
     }
     vTaskDelay(pdMS_TO_TICKS(NAND_TIMEOUT_RESET_MS));
 
-    uint8_t manufacturer, device;
     ret = nand_read_id(h, &manufacturer, &device);
     if (ret != NAND_RET_OK)
     {
         ESP_LOGE(TAG, "Error to get the ID");
-        return ret;
+        goto fail;
     }
 
 #ifdef CONFIG_NAND_MX35_PROTECTED_MODE
     ret = nand_write_protect(h);
 #else
-    ret = nand_write_unprotect(h);
+    ret = unlock_all_blocks(h);
 #endif
     if (ret != NAND_RET_OK)
     {
         ESP_LOGE(TAG, "Error to set the block protection data");
-        return ret;
+        goto fail;
     }
 
-    if (!cfg->disable_ecc)
+    /* Always write the ECC bit explicitly so that disable_ecc really disables it. */
+    ret = configure_ecc(h, !cfg->disable_ecc);
+    if (ret != NAND_RET_OK)
     {
-        ret = enable_ecc(h);
-        if (ret != NAND_RET_OK)
-        {
-            ESP_LOGE(TAG, "Failed to enable ecc");
-            return ret;
-        }
+        ESP_LOGE(TAG, "Failed to configure ecc");
+        goto fail;
     }
 
     /* Populate device info */
@@ -554,9 +664,14 @@ int nand_mx35lf1_init(nand_handle_t *h, const nand_config_t *cfg)
     h->info.pages_per_block = NAND_PAGES_PER_BLOCK;
     h->info.spare_size = NAND_SPARE_SIZE;
     h->info.total_blocks = NAND_BLOCKS_PER_LUN;
+
     h->initialized = true;
 
-    ESP_LOGD(TAG, "Manufacturer=%" PRIx8 " Device=%" PRIx8, manufacturer, device);
+    ESP_LOGD(TAG, "Manufacturer=0x%02X Device=0x%02X", manufacturer, device);
+    return NAND_RET_OK;
+
+fail:
+    release_resources(h);
     return ret;
 }
 
@@ -564,9 +679,12 @@ int nand_mx35lf1_deinit(nand_handle_t *h)
 {
     NAND_CHECK_ARG(h);
     NAND_CHECK_HANDLE(h);
-    spi_bus_remove_device(h->spi);
-    memset(&h->info, 0, sizeof(nand_info_t));
+
+    NAND_LOCK(h); /* wait for any operation in progress */
     h->initialized = false;
+    NAND_UNLOCK(h);
+
+    release_resources(h);
     return NAND_RET_OK;
 }
 
@@ -578,59 +696,43 @@ int nand_mx35lf1_page_program(nand_handle_t *h, row_address_t row, column_addres
 
     if (!validate_row_address(row) || !validate_column_address(column))
     {
-        ESP_LOGE(TAG, "Invalide row or column address");
+        ESP_LOGE(TAG, "Invalid row or column address");
         return NAND_RET_BAD_ADDRESS;
     }
 
-    uint16_t max_write_len = (NAND_PAGE_SIZE + NAND_SPARE_SIZE) - column;
-    if (write_len > max_write_len)
+    if (!validate_length(column, write_len))
     {
-        ESP_LOGE(TAG, "write length is bigger than the page");
+        ESP_LOGE(TAG, "invalid write length (%u) for column %u", (unsigned) write_len, (unsigned) column);
         return NAND_RET_INVALID_LEN;
     }
 
-    int ret = NAND_RET_OK;
+    NAND_LOCK(h);
 
-#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = nand_write_unprotect(h);
+    int ret = write_begin(h);
     if (ret != NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Failed to write unprotected");
+        NAND_UNLOCK(h);
         return ret;
     }
-#endif
 
     ret = write_enable(h);
-    if (ret != NAND_RET_OK)
+    if (ret == NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error to set the WEL bit");
-        return ret;
+        ret = program_load(h, column, data_in, write_len);
     }
 
-    ret = program_load(h, column, data_in, write_len);
-    if (ret != NAND_RET_OK)
+    if (ret == NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error on program_load() function");
-        return ret;
+        ret = program_execute(h, row);
     }
+    ret = write_end(h, ret);
 
-    ret = program_execute(h, row);
-    if (ret != NAND_RET_OK)
+    NAND_UNLOCK(h);
+
+    if (ret == NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error on program_execute() function");
-        return ret;
+        ESP_LOGD(TAG, "Page program passed");
     }
-
-#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = nand_write_protect(h);
-    if (ret != NAND_RET_OK)
-    {
-        ESP_LOGE(TAG, "failed to set the write protection");
-        return ret;
-    }
-#endif
-
-    ESP_LOGD(TAG, "Page program passed");
     return ret;
 }
 
@@ -642,25 +744,24 @@ int nand_mx35lf1_page_read(nand_handle_t *h, row_address_t row, column_address_t
 
     if (!validate_row_address(row) || !validate_column_address(column))
     {
-        ESP_LOGE(TAG, "Invalide row or column address");
+        ESP_LOGE(TAG, "Invalid row or column address");
         return NAND_RET_BAD_ADDRESS;
     }
 
-    int ret = page_read(h, row);
-    if (ret != NAND_RET_OK)
+    if (!validate_length(column, read_len))
     {
-        ESP_LOGE(TAG, "error on page_read() function");
-        return ret;
+        ESP_LOGE(TAG, "invalid read length (%u) for column %u", (unsigned) read_len, (unsigned) column);
+        return NAND_RET_INVALID_LEN;
     }
 
-    ret = read_from_cache(h, column, data_out, read_len);
-    if (ret != NAND_RET_OK)
-    {
-        ESP_LOGE(TAG, "error on read_from_cache() function");
-        return ret;
-    }
+    NAND_LOCK(h);
+    int ret = do_page_read(h, row, column, data_out, read_len);
+    NAND_UNLOCK(h);
 
-    ESP_LOGD(TAG, "Page read passed");
+    if (ret == NAND_RET_OK)
+    {
+        ESP_LOGD(TAG, "Page read passed");
+    }
     return ret;
 }
 
@@ -674,46 +775,36 @@ int nand_mx35lf1_page_copy(nand_handle_t *h, row_address_t src, row_address_t ds
         return NAND_RET_BAD_ADDRESS;
     }
 
+    NAND_LOCK(h);
+
     int ret = page_read(h, src);
     if (ret != NAND_RET_OK)
     {
         ESP_LOGE(TAG, "Failed to read page in page_copy()");
+        NAND_UNLOCK(h);
         return ret;
     }
 
-#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = nand_write_unprotect(h);
+    ret = write_begin(h);
     if (ret != NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Failed to write unprotected");
+        NAND_UNLOCK(h);
         return ret;
     }
-#endif
 
     ret = write_enable(h);
-    if (ret != NAND_RET_OK)
+    if (ret == NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error to set the WEL bit");
-        return ret;
+        ret = program_execute(h, dst);
     }
+    ret = write_end(h, ret);
 
-    ret = program_execute(h, dst);
-    if (ret != NAND_RET_OK)
+    NAND_UNLOCK(h);
+
+    if (ret == NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error on program_execute() function");
-        return ret;
+        ESP_LOGD(TAG, "Page copy passed");
     }
-
-#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = nand_write_protect(h);
-    if (ret != NAND_RET_OK)
-    {
-        ESP_LOGE(TAG, "failed to set the write protection");
-        return ret;
-    }
-#endif
-
-    ESP_LOGD(TAG, "Page copy passed");
     return ret;
 }
 
@@ -728,41 +819,28 @@ int nand_mx35lf1_block_erase(nand_handle_t *h, row_address_t row)
         return NAND_RET_BAD_ADDRESS;
     }
 
-    int ret = NAND_RET_OK;
+    NAND_LOCK(h);
 
-#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = nand_write_unprotect(h);
+    int ret = write_begin(h);
     if (ret != NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Failed to write unprotected");
+        NAND_UNLOCK(h);
         return ret;
     }
-#endif
 
     ret = write_enable(h);
-    if (ret != NAND_RET_OK)
+    if (ret == NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error to set the WEL bit");
-        return ret;
+        ret = block_erase(h, row);
     }
+    ret = write_end(h, ret);
 
-    ret = block_erase(h, row);
-    if (ret != NAND_RET_OK)
+    NAND_UNLOCK(h);
+
+    if (ret == NAND_RET_OK)
     {
-        ESP_LOGE(TAG, "Error to erase block");
-        return ret;
+        ESP_LOGD(TAG, "Block erase passed");
     }
-
-#ifdef CONFIG_NAND_MX35_PROTECTED_MODE
-    ret = nand_write_protect(h);
-    if (ret != NAND_RET_OK)
-    {
-        ESP_LOGE(TAG, "failed to set the write protection");
-        return ret;
-    }
-#endif
-
-    ESP_LOGD(TAG, "Block erase passed");
     return ret;
 }
 
@@ -771,25 +849,33 @@ int nand_mx35lf1_block_is_bad(nand_handle_t *h, row_address_t row, bool *is_bad)
     NAND_CHECK_ARG(h);
     NAND_CHECK_HANDLE(h);
     NAND_CHECK_ARG(is_bad);
-    uint8_t bad_block_mark[2];
 
-    int ret = nand_mx35lf1_page_read(h, row, NAND_PAGE_SIZE, bad_block_mark, sizeof(bad_block_mark));
-    if (ret != NAND_RET_OK)
+    if (!validate_row_address(row))
     {
-        return ret;
+        return NAND_RET_BAD_ADDRESS;
     }
 
-    ESP_LOGD(TAG, "Block is bad passed");
-    *is_bad = (bad_block_mark[0] == BAD_BLOCK_MARK || bad_block_mark[1] == BAD_BLOCK_MARK);
-    return NAND_RET_OK;
+    const uint32_t block = row >> 6;
+
+    NAND_LOCK(h);
+    int ret = read_bad_marker(h, block, is_bad);
+    NAND_UNLOCK(h);
+
+    return ret;
 }
 
 int nand_mx35lf1_block_mark_bad(nand_handle_t *h, row_address_t row)
 {
     NAND_CHECK_ARG(h);
     NAND_CHECK_HANDLE(h);
+
+    if (!validate_row_address(row))
+    {
+        return NAND_RET_BAD_ADDRESS;
+    }
+
     uint8_t bad_block_mark[2] = {BAD_BLOCK_MARK, BAD_BLOCK_MARK};
-    return nand_mx35lf1_page_program(h, row, NAND_PAGE_SIZE, bad_block_mark, sizeof(bad_block_mark));
+    return nand_mx35lf1_page_program(h, row & ~0x3FU, NAND_PAGE_SIZE, bad_block_mark, sizeof(bad_block_mark));
 }
 
 int nand_mx35lf1_page_is_free(nand_handle_t *h, row_address_t row, bool *is_free)
@@ -797,6 +883,11 @@ int nand_mx35lf1_page_is_free(nand_handle_t *h, row_address_t row, bool *is_free
     NAND_CHECK_ARG(h);
     NAND_CHECK_HANDLE(h);
     NAND_CHECK_ARG(is_free);
+
+    if (!validate_row_address(row))
+    {
+        return NAND_RET_BAD_ADDRESS;
+    }
 
     size_t alloc_len = NAND_PAGE_FULL_SIZE;
     uint8_t *page_main_and_oob_buffer = (uint8_t *) malloc(alloc_len);
@@ -806,10 +897,13 @@ int nand_mx35lf1_page_is_free(nand_handle_t *h, row_address_t row, bool *is_free
         return NAND_RET_E_INVALID_ARG;
     }
 
+    NAND_LOCK(h);
+
     int ret = nand_mx35lf1_page_read(h, row, 0, page_main_and_oob_buffer, alloc_len);
     if (ret != NAND_RET_OK)
     {
         free(page_main_and_oob_buffer);
+        NAND_UNLOCK(h);
         return ret;
     }
 
@@ -826,6 +920,7 @@ int nand_mx35lf1_page_is_free(nand_handle_t *h, row_address_t row, bool *is_free
 
     free(page_main_and_oob_buffer);
     ESP_LOGD(TAG, "Nand is free passed");
+    NAND_UNLOCK(h);
     return NAND_RET_OK;
 }
 
@@ -834,38 +929,47 @@ int nand_mx35lf1_clear(nand_handle_t *h)
     NAND_CHECK_ARG(h);
     NAND_CHECK_HANDLE(h);
 
-    bool is_bad;
-    for (int i = 0; i < NAND_BLOCKS_PER_LUN; i++)
+    int result = NAND_RET_OK;
+    uint32_t failed = 0;
+
+    for (uint32_t i = 0; i < NAND_BLOCKS_PER_LUN; i++)
     {
-        ESP_LOGI(TAG, "Erase block : %d", i);
+        ESP_LOGD(TAG, "Erase block : %" PRIu32, i);
         row_address_t row = NAND_ROW_ADDR(i, 0);
+
+        bool is_bad = false;
         int ret = nand_mx35lf1_block_is_bad(h, row, &is_bad);
         if (ret != NAND_RET_OK)
         {
-            // return ret;
+            failed++;
+            result = ret;
             continue;
         }
 
-        if (!is_bad)
+        if (is_bad)
         {
-            int ret_ = nand_mx35lf1_block_erase(h, row);
-            if (ret_ != NAND_RET_OK)
-            {
-                // return ret;
-                continue;
-            }
+            continue;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+        ret = nand_mx35lf1_block_erase(h, row);
+        if (ret != NAND_RET_OK)
+        {
+            ESP_LOGW(TAG, "Erase of block %" PRIu32 " failed: %s", i, nand_err_to_str(ret));
+            failed++;
+            result = ret;
+        }
     }
 
-    return NAND_RET_OK;
+    if (failed > 0)
+    {
+        ESP_LOGW(TAG, "%" PRIu32 " block(s) could not be erased", failed);
+    }
+    return result;
 }
 
 bool nand_mx35lf1_mounted(const nand_handle_t *h)
 {
-    NAND_CHECK_ARG(h);
-    return h->initialized;
+    return (h != NULL) && h->initialized;
 }
 
 int nand_mx35lf1_get_info(const nand_handle_t *h, nand_info_t *info_out)
@@ -884,7 +988,7 @@ int nand_mx35lf1_get_info(const nand_handle_t *h, nand_info_t *info_out)
 
 const char *nand_err_to_str(const int code)
 {
-    if (code > NAND_RET_OK || code < NAND_RET_E_INVALID_ARG)
+    if (code > NAND_RET_OK || code < NAND_RET_VERIFY_FAIL)
     {
         return "unknown";
     }
@@ -902,7 +1006,9 @@ const char *nand_err_to_str(const int code)
         case NAND_RET_ECC_ERR: return "NAND_RET_ECC_ERR";
         case NAND_RET_P_FAIL: return "NAND_RET_P_FAIL";
         case NAND_RET_E_FAIL: return "NAND_RET_E_FAIL";
-        case NAND_RET_E_INVALID_ARG: return "NAND_RET_ECC_REFRESH";
+        case NAND_RET_E_INVALID_ARG: return "NAND_RET_E_INVALID_ARG";
+        case NAND_RET_NO_MEM: return "NAND_RET_NO_MEM";
+        case NAND_RET_VERIFY_FAIL: return "NAND_RET_VERIFY_FAIL";
         default: return "unknown";
     }
 }

@@ -13,10 +13,11 @@ menu "NAND MX35 diskIO Manager Configuration"
         default 5
         range 1 10
         help
-            The garbage collector ratio determines how often the garbage collector
-            runs in the NAND Virtual File System (VFS). A higher value means that
-            the garbage collector will run less frequently, which can improve performance
-            but may lead to increased fragmentation.
+            Dhara reserves 1/(ratio+1) of the journal capacity for garbage collection and
+            performs (ratio+1) collection steps whenever the journal is full.
+            A higher value gives MORE usable capacity, but each write may trigger more
+            garbage collection work (higher write amplification and latency spikes, more wear).
+            A lower value reserves more space, which makes writes cheaper and reduces wear.
 
     config NAND_MX35_PROTECTED_MODE
         bool "Enable protected mode for NAND MX35"

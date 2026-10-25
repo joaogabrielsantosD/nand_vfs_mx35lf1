@@ -3,6 +3,8 @@
 
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -20,6 +22,8 @@ typedef enum
     NAND_RET_P_FAIL = -8,
     NAND_RET_E_FAIL = -9,
     NAND_RET_E_INVALID_ARG = -10,
+    NAND_RET_NO_MEM = -11,
+    NAND_RET_VERIFY_FAIL = -12,
 } nand_err_t;
 
 /* DEVICE GEOMETRY */
@@ -114,12 +118,23 @@ typedef uint32_t row_address_t;
 /// @brief Nand column address (valid range 0-2111)
 typedef uint16_t column_address_t;
 
+/**
+ * @brief Driver handle. Treat every field as private: use the nand_mx35lf1_*() API only.
+ *
+ * All public functions are serialized with an internal recursive mutex, so a handle can be
+ * shared between tasks.
+ */
 typedef struct nand_dev_t
 {
     spi_device_handle_t spi; /**< ESP-IDF SPI device handle              */
     nand_info_t info;        /**< Device capabilities (read at init)      */
 
     bool initialized;
+
+    SemaphoreHandle_t lock; /**< Recursive mutex protecting the device     */
+    uint8_t *tx_buf;        /**< DMA-capable SPI TX buffer (NAND_SPI_MAX_TRANSFER) */
+    uint8_t *rx_buf;        /**< DMA-capable SPI RX buffer (NAND_SPI_MAX_TRANSFER) */
+
 } nand_handle_t;
 
 int nand_mx35lf1_init(nand_handle_t *h, const nand_config_t *cfg);
